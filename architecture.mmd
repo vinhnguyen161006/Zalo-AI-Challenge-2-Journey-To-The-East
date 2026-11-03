@@ -1,0 +1,57 @@
+flowchart TD
+    IN["INPUT<br/>Business package CSV/XLSX/SQLite<br/>README + rulebook + calendar<br/>Question + as_of_date"]
+
+    subgraph H["OFFLINE DETERMINISTIC HARNESS — code, 0 model params"]
+      direction TB
+      IG["Ingest & normalize<br/>Preserve raw provenance; parse headers/units/dates"]
+      DB["DuckDB/SQLite unified typed views"]
+      CAT["Schema catalog + join graph + value grounding<br/>BM25/fuzzy, key/cardinality checks"]
+      RULE["Rulebook & calendar resolver<br/>Definitions with cited source spans"]
+      IG --> DB --> CAT --> RULE
+    end
+
+    P4["Qwen3.5-4B<br/>Question interpreter + structured plan"]
+    GUARD["Plan validation<br/>Check rules, columns, filters, date range & answer type"]
+    ROUTER{"Adaptive router<br/>simple & unambiguous?"}
+
+    subgraph FAST["FAST PATH"]
+      FSQL["Verified SQL template or 1 SQL candidate"]
+      FEXEC["Read-only SQL executor<br/>type / invariant checks"]
+      FSQL --> FEXEC
+    end
+
+    subgraph SLOW["SLOW PATH — divergent reasoning"]
+      direction TB
+      SQL9["Qwen3.5-9B: SQL candidates<br/>diverse plans / schema views"]
+      PY4["Qwen3.5-4B: independent Pandas candidate<br/>from question + evidence, not SQL output"]
+      EXEC["Sandbox: execute candidates<br/>bounded execution-guided repair"]
+      SQL9 --> EXEC
+      PY4 --> EXEC
+    end
+
+    CHECK["Evidence-aware verifier<br/>Result clusters + source lineage<br/>JOIN cardinality + rule/time checks<br/>SQL-vs-Python consistency"]
+    DIS{"Disagreement or high risk?"}
+    DPC["Bounded differential verification<br/>challenge data / targeted counterexamples<br/>9B critic only as needed"]
+    DEC["Calibrated decision per type<br/>Answer / Unanswerable / Abstain"]
+    OUT["Deterministic output formatter<br/>schema & unit tests → submission.jsonl"]
+
+    IN --> IG
+    RULE --> P4 --> GUARD --> ROUTER
+    ROUTER -- "Yes" --> FSQL
+    ROUTER -- "No" --> SQL9
+    ROUTER -- "No" --> PY4
+    FEXEC --> CHECK
+    EXEC --> CHECK
+    CHECK --> DIS
+    DIS -- "No" --> DEC
+    DIS -- "Yes" --> DPC --> DEC
+    DEC --> OUT
+
+    classDef code fill:#e0f2ef,stroke:#008577,color:#063b37;
+    classDef llm fill:#e6efff,stroke:#2869c8,color:#103b7a;
+    classDef verify fill:#fff0db,stroke:#d88b1a,color:#74420b;
+    classDef input fill:#eef2f7,stroke:#556b80,color:#243445;
+    class IG,DB,CAT,RULE,FSQL,FEXEC,EXEC,OUT code;
+    class P4,SQL9,PY4 llm;
+    class CHECK,DIS,DPC,DEC,GUARD,ROUTER verify;
+    class IN input;
