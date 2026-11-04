@@ -1,0 +1,34 @@
+mode: dev
+adapter: synthetic
+data_root: ../tests/fixtures/synthetic_business/data
+rulebook: ../tests/fixtures/synthetic_business/rulebook.md
+calendar: ../tests/fixtures/synthetic_business/calendar.csv
+questions: ../tests/fixtures/synthetic_business/questions.jsonl
+output_root: ../outputs
+seed: 7
+models:
+  backend: disabled
+  planner_endpoint: http://127.0.0.1:8001/v1/chat/completions
+  reasoner_endpoint: http://127.0.0.1:8000/v1/chat/completions
+  planner_model: Qwen/Qwen3.5-4B
+  reasoner_model: Qwen/Qwen3.5-9B
+  planner_revision: null
+  reasoner_revision: null
+limits:
+  query_timeout_seconds: 10
+  max_wallclock_seconds: 60
+  max_model_calls: 6
+  max_candidates: 4
+  max_repairs: 1
+  max_result_rows: 10000
+  max_result_bytes: 2000000
+  memory_mb: 512
+  max_source_bytes: 200000000
+  max_source_files: 200
+# Local engineering defaults above are NOT official competition limits.
+official:
+  rules_verified: false
+  validator_path: null
+  parameter_cap: null
+  checkpoint_audit: null
+  scoring_verified: false

@@ -1,0 +1,3 @@
+{"id":"fixture_count","business_id":"biz_demo","question":"Có bao nhiêu bản ghi đơn hàng trong dữ liệu?","as_of_date":"2026-01-10"}
+{"id":"fixture_revenue","business_id":"biz_demo","question":"Tổng doanh thu hợp lệ là bao nhiêu?","as_of_date":"2026-01-10"}
+{"id":"fixture_missing","business_id":"biz_demo","question":"Nhiệt độ trong cửa hàng là bao nhiêu?","as_of_date":"2026-01-10"}

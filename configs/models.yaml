@@ -1,0 +1,12 @@
+parameter_cap: null
+counting_policy_verified: false
+fallback: FALLBACK_SINGLE_9B
+checkpoints:
+  - id: Qwen/Qwen3.5-4B
+    path: ../models/planner
+    revision: null
+    roles: [planner, independent_dsl]
+  - id: Qwen/Qwen3.5-9B
+    path: ../models/reasoner
+    revision: null
+    roles: [sql_coder, repair, critic]

@@ -1,0 +1,5 @@
+order_id,product_id,quantity,amount
+o1,p1,2,120
+o2,p2,4,200
+o3,p1,5,300
+o4,p2,2,80

@@ -1,0 +1,3 @@
+extends: dev.yaml
+mode: official
+# Deliberately blocked until the organizer's full kit and limits are audited.

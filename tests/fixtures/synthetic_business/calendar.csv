@@ -1,0 +1,3 @@
+date,lunar_day,lunar_month,lunar_year,lunar_leap,holiday
+2026-02-10,23,12,2025,false,synthetic_boundary
+2026-02-27,10,1,2026,false,synthetic_boundary

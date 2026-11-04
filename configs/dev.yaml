@@ -1,0 +1,6 @@
+extends: default.yaml
+adapter: train
+data_root: ../train/data
+rulebook: ../train/rulebook.md
+calendar: ../train/calendar.csv
+questions: ../train/questions.jsonl

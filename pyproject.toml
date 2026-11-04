@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datamate-agent"
+version = "0.1.0"
+description = "AEGDA: offline execution-grounded business data agent"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "pydantic>=2.10,<3", "PyYAML>=6,<7", "typer>=0.15,<1",
+  "duckdb>=1.2,<2", "sqlglot>=26,<31", "openpyxl>=3.1,<4",
+  "rapidfuzz>=3,<4", "pandas>=2.2,<3", "charset-normalizer>=3,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "mypy>=1.15,<2", "types-PyYAML", "pandas-stubs"]
+# Install a separately validated vLLM environment on Linux; CPU development never imports it.
+gpu = ["safetensors>=0.5,<1"]
+
+[project.scripts]
+datamate = "datamate.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+datamate = ["prompts/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+

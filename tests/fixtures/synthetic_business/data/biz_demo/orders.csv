@@ -1,0 +1,5 @@
+order_id,order_date,status,customer_id,amount
+o1,2026-01-01,complete,c1,120
+o2,2026-01-05,cancelled,c1,200
+o3,2026-01-06,returned,c2,300
+o4,2026-01-10,delivering,c2,80
