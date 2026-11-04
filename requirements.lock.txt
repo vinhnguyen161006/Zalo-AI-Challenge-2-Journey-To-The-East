@@ -1,4 +1,3 @@
-# CPU development environment resolved and tested on Python 3.12 / Windows.
 annotated-doc==0.0.5
 annotated-types==0.8.0
 charset-normalizer==3.5.2

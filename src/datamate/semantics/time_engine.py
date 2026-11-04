@@ -67,7 +67,6 @@ def resolve_time(
     elif "thang nay" in text:
         start, end = today.replace(day=1), tomorrow
     elif "thang truoc" in text:
-        # Without an explicit comparison context, resolve the complete preceding month.
         end = today.replace(day=1)
         start = (end - timedelta(days=1)).replace(day=1)
         if any(t in text for t in ("so voi", "tang", "giam")):

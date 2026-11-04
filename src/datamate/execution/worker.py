@@ -29,8 +29,6 @@ def encode(value: Any) -> Any:
 def main() -> None:
     request = json.loads(sys.stdin.buffer.read(2000000))
     limits = request["limits"]
-    # OS memory limit is available on Linux. Windows uses DuckDB memory_limit;
-    # this is not an OS security boundary for arbitrary native/Python programs.
     if os.name == "posix":
         resource = importlib.import_module("resource")
 
@@ -68,7 +66,6 @@ def main() -> None:
             )
             import pandas as pd
 
-            # DuckDB fetchdf coerces DECIMAL to binary float; native fetch keeps Decimal.
             frame = pd.DataFrame(cursor.fetchall(), columns=[c[0] for c in cursor.description])
             if len(frame) > limits["max_result_rows"]:
                 raise ValueError("DSL source row limit exceeded; no partial execution")

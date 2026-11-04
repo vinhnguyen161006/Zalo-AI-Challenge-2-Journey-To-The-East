@@ -24,6 +24,14 @@ class Limits(Schema):
     memory_mb: int = Field(default=512, ge=64)
     max_source_bytes: int = Field(default=200000000, ge=1)
     max_source_files: int = Field(default=200, ge=1)
+    max_dsl_source_rows: int = Field(default=500000, ge=1)
+    max_context_bytes: int = Field(default=512000, ge=1000)
+    slow_candidates: int = Field(default=3, ge=1, le=8)
+    grounding_limit: int = Field(default=8, ge=1)
+    grounding_scan_limit: int = Field(default=5000, ge=1)
+    grounding_min_length: int = Field(default=3, ge=1)
+    grounding_score_threshold: float = Field(default=70, ge=0, le=100)
+    grounding_ambiguity_margin: float = Field(default=5, ge=0, le=100)
 
 
 class Models(Schema):
@@ -32,6 +40,7 @@ class Models(Schema):
     reasoner_endpoint: str = "http://127.0.0.1:8000/v1/chat/completions"
     planner_model: str = "Qwen/Qwen3.5-4B"
     reasoner_model: str = "Qwen/Qwen3.5-9B"
+    max_output_tokens: int = Field(default=4096, ge=1)
     planner_revision: str | None = None
     reasoner_revision: str | None = None
 
@@ -66,8 +75,6 @@ class Config(Schema):
         if missing:
             raise InvalidInput(f"Missing inputs: {missing}")
         if self.mode == "official":
-            # The provided train release has no authoritative validator/runtime guidance.
-            # A boolean flag alone must never bypass the unimplemented official adapter.
             raise OfficialRulesUnverified(
                 "BLOCKED_BY_OFFICIAL_KIT: official validator, deployment guidance, "
                 "parameter policy and verified adapter integration are required."
@@ -102,7 +109,6 @@ def _read(path: Path, seen: set[Path]) -> dict[str, Any]:
     parent = data.pop("extends", None)
     if parent:
         data = _merge(_read(path.parent / parent, seen), data)
-    # Each path is relative to the config where it was declared, independent of cwd.
     for key in ("data_root", "rulebook", "calendar", "questions", "output_root"):
         if key in data and not Path(str(data[key])).is_absolute():
             expanded = os.path.expandvars(str(data[key]))

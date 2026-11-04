@@ -121,7 +121,6 @@ def _predict(config: Path, questions: Path | None, output: Path, resume: bool) -
         cfg.questions = questions.resolve()
     cfg.preflight()
     records = list(TrainKitAdapter(cfg.data_root).iter_questions(cfg.questions))
-    # Bind resume to all supplied data bytes, rulebook/calendar, config and questions.
     fingerprints = {
         p.relative_to(cfg.data_root).as_posix(): sha256_file(p)
         for p in sorted(cfg.data_root.rglob("*"))

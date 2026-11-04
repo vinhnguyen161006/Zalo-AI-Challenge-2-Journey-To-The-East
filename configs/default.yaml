@@ -25,7 +25,6 @@ limits:
   memory_mb: 512
   max_source_bytes: 200000000
   max_source_files: 200
-# Local engineering defaults above are NOT official competition limits.
 official:
   rules_verified: false
   validator_path: null

@@ -40,7 +40,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class VLLMModelClient:
-    def __init__(self, endpoint: str, model: str):
+    def __init__(self, endpoint: str, model: str, max_output_tokens: int):
         parsed = urlsplit(endpoint)
         if (
             parsed.scheme != "http"
@@ -49,7 +49,7 @@ class VLLMModelClient:
             or parsed.password
         ):
             raise ModelUnavailable("Only loopback HTTP model endpoints are allowed")
-        self.endpoint, self.model = endpoint, model
+        self.endpoint, self.model, self.max_output_tokens = endpoint, model, max_output_tokens
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def generate_structured(
@@ -59,7 +59,7 @@ class VLLMModelClient:
             "model": self.model,
             "messages": messages,
             "temperature": 0,
-            "max_tokens": 4096,
+            "max_tokens": self.max_output_tokens,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": "datamate", "strict": True, "schema": schema},

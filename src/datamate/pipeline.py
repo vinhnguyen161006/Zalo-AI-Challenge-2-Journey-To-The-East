@@ -177,7 +177,6 @@ class Pipeline:
                 disagreement = False
                 if path == "SLOW" and budget.candidates < self.config.limits.max_candidates:
                     budget.candidate()
-                    # Clean-room payload: no PlanIR, SQL code, results, filters or winners.
                     dsl = ask(self.planner, "dsl_coder", original, DataOpsCandidate, budget)
                     dsl_result = execute(
                         dsl, catalog, self.config.limits, budget.remaining_seconds()
@@ -198,7 +197,6 @@ class Pipeline:
                 failures = sorted({f for _, _, report in candidates for f in report.hard_failures})
                 if disagreement:
                     failures.append("cross_paradigm_disagreement")
-                # Neither execution success nor agreement is a calibrated probability.
                 decision = abstain(
                     q.id, *(failures or ["uncalibrated_policy", "semantic_verification_incomplete"])
                 )

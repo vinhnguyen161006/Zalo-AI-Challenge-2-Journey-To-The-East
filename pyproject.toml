@@ -16,7 +16,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1", "mypy>=1.15,<2", "types-PyYAML", "pandas-stubs"]
-# Install a separately validated vLLM environment on Linux; CPU development never imports it.
 gpu = ["safetensors>=0.5,<1"]
 
 [project.scripts]

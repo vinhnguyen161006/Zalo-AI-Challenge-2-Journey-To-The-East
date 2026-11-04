@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+MAX_SQL_CHARS = 32000
 AnswerType = Literal["number", "percent", "string", "date", "boolean", "list", "table"]
 
 
@@ -148,7 +149,7 @@ class PlanIR(Schema):
 
 class SqlCandidate(Schema):
     candidate_id: str
-    sql: str = Field(min_length=1, max_length=32000)
+    sql: str = Field(min_length=1, max_length=MAX_SQL_CHARS)
     strategy: str
     answer_type: AnswerType
     rule_ids: list[str] = Field(default_factory=list)

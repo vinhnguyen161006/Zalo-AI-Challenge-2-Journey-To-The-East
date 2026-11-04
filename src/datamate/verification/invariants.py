@@ -51,7 +51,6 @@ def verify(
     if time.ambiguous:
         report.hard_failures.append("ambiguous_time")
     if time.start_iso or time.end_exclusive_iso:
-        # A string occurring in SQL is not evidence of correct column/operator semantics.
         report.soft_warnings.append("temporal_predicates_not_formally_verified")
     if plan.unknowns or plan.assumptions or plan.risk_flags:
         report.soft_warnings.append("unresolved_plan_semantics")

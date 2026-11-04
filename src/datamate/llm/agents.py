@@ -9,7 +9,15 @@ from pydantic import ValidationError
 from datamate.errors import InvalidModelOutput
 from datamate.llm.client import ModelClient
 from datamate.routing.budgets import BudgetManager
-from datamate.types import Catalog, PlanIR, QuestionRecord, RuleEvidence, Schema, TimeResolution
+from datamate.types import (
+    Catalog,
+    GroundingCandidate,
+    PlanIR,
+    QuestionRecord,
+    RuleEvidence,
+    Schema,
+    TimeResolution,
+)
 
 T = TypeVar("T", bound=Schema)
 
@@ -22,7 +30,7 @@ def ask(
     budget: BudgetManager,
 ) -> T:
     serialized = json.dumps(payload, ensure_ascii=False, default=str)
-    if len(serialized.encode()) > 512000:
+    if len(serialized.encode()) > budget.limits.max_context_bytes:
         raise InvalidModelOutput("Context exceeds engineering size limit; no silent truncation")
     budget.model_call()
     prompt = files("datamate").joinpath(f"prompts/{role}.md").read_text(encoding="utf-8")
@@ -40,14 +48,19 @@ def ask(
 
 
 def evidence_context(
-    q: QuestionRecord, catalog: Catalog, rules: list[RuleEvidence], time: TimeResolution
+    q: QuestionRecord,
+    catalog: Catalog,
+    rules: list[RuleEvidence],
+    time: TimeResolution,
+    entities: list[GroundingCandidate],
 ) -> dict[str, Any]:
     return {
         "question": q.model_dump(),
-        "source_schema": [t.model_dump() for t in catalog.tables],
+        "source_schema": [t.model_dump(exclude={"source_rows"}) for t in catalog.tables],
         "source_readme": catalog.readme,
         "source_rules": [r.model_dump() for r in rules],
         "time_evidence": time.model_dump(),
+        "entity_candidates": [e.model_dump() for e in entities],
     }
 
 

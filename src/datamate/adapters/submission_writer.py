@@ -149,7 +149,6 @@ def write_predictions(
         if partial.exists():
             raw = partial.read_bytes()
             if raw and not raw.endswith(b"\n"):
-                # Recover only an interrupted final line, never skip a corrupt complete line.
                 partial.write_bytes(raw[: raw.rfind(b"\n") + 1])
             old = read_predictions(partial)
             completed = len(old)

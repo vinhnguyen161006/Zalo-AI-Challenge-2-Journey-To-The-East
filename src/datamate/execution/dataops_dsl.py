@@ -32,7 +32,6 @@ class DataOpsCandidate(Schema):
 
 def interpret(candidate: DataOpsCandidate, frame: pd.DataFrame) -> pd.DataFrame:
     with localcontext() as context:
-        # Source DECIMAL(38,10), bounded row counts: avoid default 28-digit rounding.
         context.prec = 80
         return _interpret(candidate, frame)
 

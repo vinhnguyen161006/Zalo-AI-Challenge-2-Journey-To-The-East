@@ -105,3 +105,54 @@ def test_decimal_width_changes_do_not_break_batch(tmp_path: Path) -> None:
             str(con.execute(f'SELECT SUM(amount) FROM "{result.tables[0].table_id}"').fetchone()[0])
             == "1000101.2500000000"
         )
+
+
+def write_csv(business: Path, name: str, text: str) -> None:
+    business.mkdir()
+    (business / name).write_text(text, encoding="utf-8")
+
+
+def test_one_proving_cell_resolves_thousands_separators_for_the_column(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path / "biz",
+        "sales.csv",
+        'item,price,qty\na,"560,000",0.5\nb,"4,000",1.25\nc,"1,056,000",2\n',
+    )
+    result = ingest_business(tmp_path, "biz", tmp_path / "cache")
+    price = next(c for c in result.tables[0].columns if c.name == "price")
+    assert price.dtype == "DECIMAL(38,10)"
+    assert price.warnings == []
+    with duckdb.connect(result.database_path, read_only=True) as con:
+        total = con.execute(f'SELECT SUM(price) FROM "{result.tables[0].table_id}"').fetchone()[0]
+    assert str(total) == "1620000.0000000000"
+
+
+def test_unprovable_separator_column_keeps_its_warning(tmp_path: Path) -> None:
+    write_csv(tmp_path / "biz", "sales.csv", 'item,price\na,"560,000"\nb,"4,000"\n')
+    result = ingest_business(tmp_path, "biz", tmp_path / "cache")
+    price = next(c for c in result.tables[0].columns if c.name == "price")
+    assert price.dtype == "VARCHAR"
+    assert price.warnings == ["ambiguous_numeric"]
+
+
+def test_one_proving_cell_resolves_day_first_dates_for_the_column(tmp_path: Path) -> None:
+    write_csv(tmp_path / "biz", "sales.csv", "item,order_date\na,03/04/2026\nb,25/02/2026\n")
+    result = ingest_business(tmp_path, "biz", tmp_path / "cache")
+    column = next(c for c in result.tables[0].columns if c.name == "order_date")
+    assert column.warnings == []
+    assert column.samples == ["2026-04-03", "2026-02-25"]
+
+
+def test_native_excel_floats_load_as_decimals(tmp_path: Path) -> None:
+    business = tmp_path / "biz"
+    business.mkdir()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["item", "rate"])
+    sheet.append(["a", 0.125])
+    sheet.append(["b", 1.234])
+    workbook.save(business / "rates.xlsx")
+    result = ingest_business(tmp_path, "biz", tmp_path / "cache")
+    rate = next(c for c in result.tables[0].columns if c.name == "rate")
+    assert rate.dtype == "DECIMAL(38,10)"
+    assert rate.warnings == []

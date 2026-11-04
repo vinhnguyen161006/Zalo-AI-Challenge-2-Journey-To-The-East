@@ -48,7 +48,6 @@ def execute(
         request.update(kind="dsl", candidate=candidate.model_dump())
         program = candidate.model_dump_json()
         tables = [candidate.source_table]
-    # Do not inherit API keys, tokens, proxies or HF settings into the worker.
     env = {
         k: v
         for k, v in os.environ.items()
@@ -71,7 +70,6 @@ def execute(
     except subprocess.TimeoutExpired as exc:
         raise QueryTimeout("Execution child timed out") from exc
     if completed.returncode:
-        # Do not expose SQL values/tracebacks on stdout or to submission records.
         raise DatamateError("EXECUTION_FAILED")
     if len(completed.stdout) > limits.max_result_bytes:
         raise ResourceExceeded("Result byte limit exceeded")

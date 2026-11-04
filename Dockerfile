@@ -1,4 +1,3 @@
-# CPU development image. Official GPU image/base digest awaits organizer guidance.
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

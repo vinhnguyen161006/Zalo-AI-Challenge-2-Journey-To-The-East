@@ -1,6 +1,6 @@
 extends: default.yaml
 adapter: train
-data_root: ../train/data
-rulebook: ../train/rulebook.md
-calendar: ../train/calendar.csv
-questions: ../train/questions.jsonl
+data_root: ../data/train/data
+rulebook: ../data/train/rulebook.md
+calendar: ../data/train/calendar.csv
+questions: ../data/train/questions.jsonl

@@ -20,11 +20,22 @@ from openpyxl import load_workbook
 
 from datamate.config import Limits
 from datamate.data.excel_tables import table_regions
-from datamate.data.normalization import identifier, normalized_text, parse_date, parse_number
+from datamate.data.normalization import (
+    date_day_first,
+    identifier,
+    normalized_text,
+    number_style,
+    parse_date,
+    parse_number,
+)
 from datamate.errors import DataQualityError, InvalidInput, ResourceExceeded
 from datamate.types import Catalog, ColumnCard, JoinCandidate, TableCard
 
-PARSER_VERSION = "0.1.1"
+PARSER_VERSION = "0.1.2"
+KEY_NAME_TOKENS = ("id", "ma", "code", "phone", "sdt")
+DECIMAL_SCALE = 10
+DECIMAL_INTEGER_DIGITS = 28
+DECIMAL_TYPE = "DECIMAL(38,10)"
 
 
 def sha256_file(path: Path) -> str:
@@ -74,19 +85,23 @@ def _csv(path: Path) -> tuple[list[list[Any]], list[int], list[str]]:
     return rows, source_rows, warnings
 
 
+def _is_identifier_column(name: str, nonempty: list[Any]) -> bool:
+    key_like = any(token in name.split("_") for token in KEY_NAME_TOKENS)
+    leading_zero = any(
+        isinstance(v, str) and len(v) > 1 and v.startswith("0") and v.isdigit() for v in nonempty
+    )
+    return key_like or leading_zero
+
+
 def _infer(values: list[Any], name: str) -> tuple[str, list[Any], list[str]]:
     nonempty = [v for v in values if v is not None and str(v).strip()]
     if not nonempty:
         return "VARCHAR", [None] * len(values), []
-    # Preserve identifiers/leading zeros even when every value is numeric.
-    key_like = any(token in name.split("_") for token in ("id", "ma", "code", "phone", "sdt"))
-    if key_like or any(
-        isinstance(v, str) and len(v) > 1 and v.startswith("0") and v.isdigit() for v in nonempty
-    ):
+    if _is_identifier_column(name, nonempty):
         return "VARCHAR", [None if v is None or str(v) == "" else str(v) for v in values], []
-    # Parse repeated cell values once per column; preserve original row order/raw data.
     unique = {(type(v).__name__, str(v)): v for v in nonempty}
-    date_cache = {key: parse_date(v) for key, v in unique.items()}
+    day_first = date_day_first(unique.values())
+    date_cache = {key: parse_date(v, day_first=day_first) for key, v in unique.items()}
     dates = list(date_cache.values())
     if all(p.value is not None for p in dates):
         return (
@@ -99,7 +114,8 @@ def _infer(values: list[Any], name: str) -> tuple[str, list[Any], list[str]]:
             ],
             [],
         )
-    number_cache = {key: parse_number(v) for key, v in unique.items()}
+    style = number_style(unique.values())
+    number_cache = {key: parse_number(v, style=style) for key, v in unique.items()}
     numbers = list(number_cache.values())
     warnings = sorted(
         {
@@ -115,16 +131,17 @@ def _infer(values: list[Any], name: str) -> tuple[str, list[Any], list[str]]:
             else None
             for v in values
         ]
-        # DuckDB DECIMAL(38,10) must not silently round source precision.
         if any(
-            p is not None and (p.as_tuple().exponent < -10 or p.adjusted() >= 28) for p in parsed
+            p is not None
+            and (p.as_tuple().exponent < -DECIMAL_SCALE or p.adjusted() >= DECIMAL_INTEGER_DIGITS)
+            for p in parsed
         ):
             return (
                 "VARCHAR",
                 [str(v) if v is not None else None for v in values],
                 ["decimal_precision_exceeded"],
             )
-        return "DECIMAL(38,10)", parsed, warnings
+        return DECIMAL_TYPE, parsed, warnings
     return (
         "VARCHAR",
         [None if v is None or not str(v).strip() else str(v) for v in values],

@@ -1240,6 +1240,81 @@ build: offline Docker and competition validation
 
 Với package chưa hỗ trợ model Qwen3.5 hiện tại, dùng compatible backend đã **kiểm thử** thay vì patch nóng không kiểm soát. Chỉ build lock file sau khi xác nhận phiên bản tương thích.
 
+### 19.1.1. Tech stack hiện tại (đã pin, cập nhật 04/11/2026)
+
+Nguồn sự thật: `pyproject.toml` (khoảng version cho phép) và `requirements.lock.txt` (version chính xác đã resolve và test trên Python 3.12 / Windows). Khi đổi dependency phải cập nhật cả hai file và bảng này.
+
+**Ngôn ngữ, build, CLI**
+
+| Thành phần | Version / giá trị | Vai trò | Trạng thái |
+|---|---|---|---|
+| Python | `>=3.11,<3.13`; đã test 3.12 | runtime | in use |
+| setuptools | `>=75` (build backend `setuptools.build_meta`) | build, editable install `pip install -e . --no-deps` | in use |
+| Package | `datamate-agent` 0.1.0, src-layout `src/datamate` | mã nguồn | in use |
+| CLI entry point | `datamate = datamate.cli:app` | `preflight`, `inspect`, `test-fixtures`, `predict`, `validate`, `evaluate`, `audit-models` | in use |
+| Makefile | `install`, `test`, `lint`, `typecheck`, `smoke`, `preflight`, `inspect-all` | lệnh tắt | in use |
+
+**Thư viện runtime (CPU)**
+
+| Thư viện | Version lock | Vai trò trong code |
+|---|---|---|
+| `pydantic` / `pydantic_core` | 2.14.2 / 2.50.2 | schema strict (`extra="forbid"`, `schema_version`), config, PlanIR, SqlCandidate, DataOpsDSL |
+| `PyYAML` | 6.0.3 | đọc config YAML có `extends` |
+| `typer` (+ `rich`, `shellingham`) | 0.27.3 (+ 15.0.0, 1.5.4) | CLI |
+| `duckdb` | 1.5.6 | snapshot chuẩn hóa `normalized.duckdb`, dialect SQL, executor read-only (`enable_external_access=false`) |
+| `sqlglot` | 30.29.0 | parse SQL, AST allowlist, scope/table checks (dialect `duckdb`) |
+| `pandas` / `numpy` | 2.3.3 / 2.5.4 | nạp batch vào DuckDB, interpreter DataOpsDSL |
+| `openpyxl` | 3.1.5 | đọc XLSX, merged cells, cached formula values |
+| `charset-normalizer` | 3.5.2 | fallback encoding cho CSV |
+| `RapidFuzz` | 3.14.6 | value grounding (`WRatio`) |
+| `python-dateutil`, `pytz`, `tzdata` | 4.0.0, 2026.6, 2026.6 | dependency bắc cầu của pandas |
+
+**Python stdlib dùng có chủ đích**
+
+| Module | Vai trò |
+|---|---|
+| `sqlite3` | đọc nguồn `.sqlite` với URI `mode=ro` + `PRAGMA query_only` |
+| `csv` | đọc CSV strict, sniff delimiter `, ; \t` |
+| `subprocess` | chạy SQL/DSL trong child process `datamate.execution.worker`, env đã lọc, timeout |
+| `resource` | `RLIMIT_CPU`, `RLIMIT_FSIZE` cho worker trên POSIX (Windows không có) |
+| `urllib.request` | HTTP client tới model server loopback, không proxy, không redirect |
+| `hashlib` | SHA-256 fingerprint cho file nguồn, cache, resume, program hash |
+| `decimal` | số chính xác, serialize JSON không qua float |
+| `logging` + `json` | structured log JSON ra stderr (`EventFormatter`) |
+
+**Dev / quality gate**
+
+| Tool | Version lock | Cấu hình |
+|---|---|---|
+| `pytest` | 9.2.0 | `testpaths = ["tests"]`; unit / integration / security / e2e |
+| `ruff` | 0.17.3 | lint `E, F, I, B, UP`, bỏ `E501, B008`; `line-length = 100`; `ruff format` |
+| `mypy` | 1.20.2 | `disallow_untyped_defs`, `check_untyped_defs`, `ignore_missing_imports` |
+| `pandas-stubs`, `types-PyYAML` | 3.1.0.261029, 6.0.12.20261103 | type stubs |
+
+**Model và serving (target, chưa load thật)**
+
+| Thành phần | Giá trị | Trạng thái |
+|---|---|---|
+| Planner / independent DSL | `Qwen/Qwen3.5-4B`, `models/planner`, revision `null` | BLOCKED_BY_GPU, chưa pin revision |
+| SQL coder / repair / critic | `Qwen/Qwen3.5-9B`, `models/reasoner`, revision `null` | BLOCKED_BY_GPU, chưa pin revision |
+| Fallback | `FALLBACK_SINGLE_9B` (`configs/models.yaml`) | khai báo, chưa test |
+| Serving | vLLM, giao thức OpenAI chat-completions, `response_format: json_schema` strict, `127.0.0.1:8001` (planner) và `:8000` (reasoner) | client có; vLLM chưa cài, chưa lock |
+| GPU extra | `safetensors>=0.5,<1` (`.[gpu]`); `vllm`, `torch`, `transformers` cài riêng trên Linux | không nằm trong lock CPU |
+| Parameter audit | đọc header safetensors bằng stdlib (`struct`, `json`), không cần torch | in use |
+
+**Lưu trữ, cache, container**
+
+| Thành phần | Giá trị |
+|---|---|
+| Cache | file + DuckDB: `outputs/cache/<business_id>/<fingerprint>/{normalized.duckdb,catalog.json}`; trace `outputs/traces/` |
+| Redis / vector DB | không dùng ở MVP |
+| Docker (CPU dev) | `python:3.12-slim`, user `10001`, `ENTRYPOINT ["datamate"]`, chạy `--network none --read-only`; image GPU chính thức chờ hướng dẫn BTC |
+| Offline env | `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `PYTHONNOUSERSITE=1` trong worker |
+
+**Gợi ý ở bảng trên nhưng chưa cài:** `orjson`, `structlog`, `pytest-cov`, `hypothesis`. Chỉ thêm khi có nhu cầu đo được; không thêm dependency cho vài dòng code.
+
+**Cấm trong stack:** API LLM cloud, tải weights/package lúc inference, `eval`/`exec` mã do model sinh, notebook làm runtime dependency.
+
 ### 19.2. Config & secrets
 
 - `configs/dev.yaml`, `configs/official.yaml`, `configs/models.yaml`, `configs/budgets.yaml`, `configs/experiments/*.yaml`.
