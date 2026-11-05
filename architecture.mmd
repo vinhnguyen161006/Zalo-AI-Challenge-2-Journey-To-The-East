@@ -1,57 +1,76 @@
 flowchart TD
-    IN["INPUT<br/>Business package CSV/XLSX/SQLite<br/>README + rulebook + calendar<br/>Question + as_of_date"]
+    IN["INPUT per question<br/>id, business_id, question (Vietnamese), as_of_date<br/>Business package: CSV / XLSX / SQLite + README<br/>Split-shared rulebook + lunar-solar calendar.csv<br/>All business content is untrusted data"]
 
-    subgraph H["OFFLINE DETERMINISTIC HARNESS — code, 0 model params"]
+    subgraph H["DETERMINISTIC HARNESS: code only, 0 model params, offline"]
       direction TB
-      IG["Ingest & normalize<br/>Preserve raw provenance; parse headers/units/dates"]
-      DB["DuckDB/SQLite unified typed views"]
-      CAT["Schema catalog + join graph + value grounding<br/>BM25/fuzzy, key/cardinality checks"]
-      RULE["Rulebook & calendar resolver<br/>Definitions with cited source spans"]
-      IG --> DB --> CAT --> RULE
+      IG["Immutable raw ingest<br/>SHA-256 provenance, SQLite mode=ro, path checks<br/>Excel regions, headers, units, dates"]
+      DB["DuckDB typed views<br/>0 / NULL / missing kept distinct, Decimal money<br/>file cache per business fingerprint"]
+      CAT["Schema catalog + join graph<br/>key and cardinality checks<br/>RapidFuzz value grounding with evidence<br/>close top-2 marked ambiguous"]
+      RULE["Rulebook resolver<br/>each definition cites rule id + source span<br/>no rule: flag risk, never invent a formula"]
+      TIME["Time and calendar engine<br/>half-open start-end windows, Monday weeks, up to as_of_date<br/>lunar dates only from the split calendar.csv"]
+      IG --> DB --> CAT
     end
 
-    P4["Qwen3.5-4B<br/>Question interpreter + structured plan"]
-    GUARD["Plan validation<br/>Check rules, columns, filters, date range & answer type"]
-    ROUTER{"Adaptive router<br/>simple & unambiguous?"}
+    P4["Planner: Qwen3.5-4B target<br/>question + evidence context<br/>strict json_schema output: PlanIR"]
+    GUARD["Plan validator: code<br/>Pydantic schema, known tables / columns / rules<br/>grounded filters, time window, answer type"]
+    ROUTER{"Router: code<br/>FAST or SLOW<br/>reason codes + budgets"}
 
     subgraph FAST["FAST PATH"]
+      direction TB
       FSQL["Verified SQL template or 1 SQL candidate"]
-      FEXEC["Read-only SQL executor<br/>type / invariant checks"]
+      FEXEC["sqlglot AST allowlist: read-only SELECT / CTE<br/>isolated worker: time, memory, row limits<br/>type and invariant checks"]
       FSQL --> FEXEC
     end
 
-    subgraph SLOW["SLOW PATH — divergent reasoning"]
+    subgraph SLOW["SLOW PATH: independent candidates"]
       direction TB
-      SQL9["Qwen3.5-9B: SQL candidates<br/>diverse plans / schema views"]
-      PY4["Qwen3.5-4B: independent Pandas candidate<br/>from question + evidence, not SQL output"]
-      EXEC["Sandbox: execute candidates<br/>bounded execution-guided repair"]
+      SQL9["SQL coder: Qwen3.5-9B target<br/>diverse plans / schema views"]
+      DSL4["Pandas coder: Qwen3.5-4B target<br/>typed JSON pandas ops from question + evidence<br/>filter / aggregate / group / sort / select<br/>never sees SQL, PlanIR or results"]
+      EXEC["Sandboxed execution<br/>SQL: AST allowlist + isolated worker<br/>Pandas ops: code interpreter calls pandas, no generated Python, no eval / exec<br/>bounded repair keeps meaning and guardrails"]
       SQL9 --> EXEC
-      PY4 --> EXEC
+      DSL4 --> EXEC
     end
 
-    CHECK["Evidence-aware verifier<br/>Result clusters + source lineage<br/>JOIN cardinality + rule/time checks<br/>SQL-vs-Python consistency"]
+    CHECK["Evidence-aware verifier: code<br/>result clusters + cell-level lineage<br/>join cardinality: pre-aggregate, row counts before / after<br/>rule, time and unit checks, SQL vs pandas<br/>agreement is never proof"]
     DIS{"Disagreement or high risk?"}
     DPC["Bounded differential verification<br/>challenge data / targeted counterexamples<br/>9B critic only as needed"]
-    DEC["Calibrated decision per type<br/>Answer / Unanswerable / Abstain"]
-    OUT["Deterministic output formatter<br/>schema & unit tests → submission.jsonl"]
+    DEC["Decision policy: code<br/>calibrated evidence, no LLM confidence<br/>answer only if p exceeds (A+C)/(R+C)<br/>R, C, A from official evaluator: BLOCKED_BY_OFFICIAL_KIT<br/>answer / unanswerable / abstain"]
+    FAIL["Error, timeout or budget exhausted<br/>abstain + reason code, never unanswerable<br/>batch continues"]
+    OUT["Formatter + writer: code only, no LLM<br/>one typed JSONL line per question<br/>input order and ids kept, atomic write, resume"]
+
+    MODELS["Model roles over 2 checkpoints: 4B + 9B<br/>fallback FALLBACK_SINGLE_9B<br/>total stored tensors within cap, assumed 15B<br/>PENDING_OFFICIAL_VERIFICATION"]
 
     IN --> IG
-    RULE --> P4 --> GUARD --> ROUTER
-    ROUTER -- "Yes" --> FSQL
-    ROUTER -- "No" --> SQL9
-    ROUTER -- "No" --> PY4
+    IN --> RULE
+    IN --> TIME
+    CAT --> P4
+    RULE --> P4
+    TIME --> P4
+    P4 --> GUARD --> ROUTER
+    ROUTER -- "FAST" --> FSQL
+    ROUTER -- "SLOW" --> SQL9
+    ROUTER -- "SLOW" --> DSL4
+    CAT -. "evidence" .-> DSL4
     FEXEC --> CHECK
     EXEC --> CHECK
     CHECK --> DIS
     DIS -- "No" --> DEC
     DIS -- "Yes" --> DPC --> DEC
+    GUARD -. "invalid plan" .-> FAIL
+    ROUTER -. "budget exhausted" .-> FAIL
+    EXEC -. "timeout / error" .-> FAIL
+    FEXEC -. "timeout / error" .-> FAIL
+    FAIL --> OUT
     DEC --> OUT
+    MODELS -.- P4
 
     classDef code fill:#e0f2ef,stroke:#008577,color:#063b37;
     classDef llm fill:#e6efff,stroke:#2869c8,color:#103b7a;
     classDef verify fill:#fff0db,stroke:#d88b1a,color:#74420b;
     classDef input fill:#eef2f7,stroke:#556b80,color:#243445;
-    class IG,DB,CAT,RULE,FSQL,FEXEC,EXEC,OUT code;
-    class P4,SQL9,PY4 llm;
+    classDef fail fill:#fde8e8,stroke:#c0392b,color:#6b1a12;
+    class IG,DB,CAT,RULE,TIME,FSQL,FEXEC,EXEC,OUT code;
+    class P4,SQL9,DSL4,MODELS llm;
     class CHECK,DIS,DPC,DEC,GUARD,ROUTER verify;
+    class FAIL fail;
     class IN input;
