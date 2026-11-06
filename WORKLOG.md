@@ -2,14 +2,16 @@
 
 Danh sách các task cần làm để đi từ code base hiện tại tới bài nộp DataMate. Các task được
 xếp theo **đúng luồng dữ liệu của [architecture.mmd](architecture.mmd)**: từ INPUT, qua
-harness tất định, model, hai đường FAST/SLOW, bộ kiểm chứng, quyết định, tới file nộp.
+harness tất định, model, hai đường FAST/SLOW, bộ kiểm chứng, quyết định, tới file nộp. Mọi
+lỗi, timeout hoặc hết ngân sách đi nhánh `FAIL`: abstain kèm mã lý do, batch chạy tiếp.
 
 Tài liệu liên quan: [CLAUDE.md](CLAUDE.md) (luật viết code, ràng buộc cuộc thi) ·
 [CODEX_MASTER_SPEC.md](CODEX_MASTER_SPEC.md) (đặc tả kỹ thuật) · [docs/](docs/) ·
 [README.md](README.md) · rulebook: [train](data/train/rulebook.md),
 [public test](data/public_test/rulebook.md)
 
-Cập nhật lần cuối: 2026-11-04.
+Cập nhật lần cuối: 2026-11-05 (theo sơ đồ mới: nhánh pandas `DSL4`, node `TIME`, `FAIL`,
+`MODELS`).
 
 ## 0. Hiện trạng
 
@@ -81,12 +83,13 @@ Chưa có GPU và chưa có bộ kit chính thức (validator, hướng dẫn n�
 | --- | --- |
 | abstain | Bỏ trống câu hỏi. Được 0 điểm. Dùng khi hệ thống không đủ chắc. |
 | unanswerable | Khẳng định "dữ liệu không đủ để trả lời". Đây là một đáp án, có thể đúng (+1) hoặc sai (−1), khác với abstain. |
-| harness | Toàn bộ phần code tất định, không dùng model: nạp dữ liệu, catalog, rulebook, lịch. |
+| harness | Toàn bộ phần code tất định, không dùng model, chạy offline: nạp dữ liệu, typed views, catalog, rulebook, time engine và lịch. |
 | rulebook | File luật nghiệp vụ của từng bộ dữ liệu: doanh thu tính thế nào, tuần bắt đầu thứ mấy, đáp án ghi ra sao. Train và public test có rulebook khác nhau. |
 | primitive nghiệp vụ | Một hàm code đã kiểm chứng, sinh SQL cho một khái niệm của rulebook, ví dụ "đơn hợp lệ" hoặc "nợ của khách tại ngày X". |
 | PlanIR | Bản kế hoạch dạng JSON mà model 4B viết ra từ câu hỏi: cần bảng nào, cột nào, kỳ nào, loại đáp án gì. |
-| FAST / SLOW | Hai đường xử lý. FAST: câu rõ ràng, dùng template hoặc 1 SQL. SLOW: câu khó, sinh nhiều SQL và một lời giải độc lập để đối chiếu. |
-| DataOps / DSL | Lời giải độc lập viết bằng ngôn ngữ thao tác bảng có kiểu (thay cho Python thô), chạy trên pandas. Nó không được thấy SQL hay kết quả của SQL. |
+| FAST / SLOW | Hai đường xử lý. FAST: câu rõ ràng, dùng template hoặc 1 SQL. SLOW: câu khó, sinh nhiều SQL và một lời giải pandas độc lập để đối chiếu. Router chọn đường, kèm mã lý do và ngân sách. |
+| lời giải pandas (`DSL4`) | Lời giải độc lập: model 4B viết danh sách thao tác pandas dạng JSON có kiểu (filter / aggregate / group / sort / select). Code của dự án (`execution/dataops_dsl.py`) đọc JSON đó và gọi pandas. Không chạy Python do model sinh, không `eval` / `exec`. Nó không được thấy SQL, PlanIR hay kết quả. |
+| nhánh `FAIL` | Kế hoạch không hợp lệ, hết ngân sách, timeout hoặc lỗi chạy thì ra abstain kèm mã lý do, không bao giờ ra `unanswerable`. Batch chạy tiếp. |
 | fanout | JOIN làm nhân bản dòng. Ví dụ một đơn có ba lần thanh toán, JOIN thẳng thì doanh thu đơn đó bị cộng ba lần. |
 | split theo doanh nghiệp | Chia 30 doanh nghiệp train thành ba nhóm: phát triển, hiệu chỉnh, holdout. Câu của cùng một doanh nghiệp không bao giờ nằm ở hai nhóm. |
 | holdout | Nhóm doanh nghiệp cất riêng, chỉ chấm một lần ở cuối. Đây là con số điểm đáng tin duy nhất. |
@@ -100,18 +103,19 @@ Chưa có GPU và chưa có bộ kit chính thức (validator, hướng dẫn n�
 | --- | --- | --- | --- |
 | 0. Nền | `IN` (INPUT) | 1 | `adapters/official_kit.py`, `configs/` |
 | 0. Nền | (ngoài sơ đồ: đo điểm) | 2 | `eval/scorer.py` |
-| 1. Harness | `IG` Ingest & normalize | 3 | `data/ingest.py`, `data/normalization.py`, `data/excel_tables.py` |
+| 1. Harness | `IG` Immutable raw ingest | 3 | `data/ingest.py`, `data/normalization.py`, `data/excel_tables.py` |
 | 1. Harness | `DB` DuckDB typed views | 4 | `data/semantic_views.py`, `semantics/units.py` |
-| 1. Harness | `CAT` Catalog + join graph + grounding | 5 | `data/column_roles.py`, `data/join_graph.py`, `data/grounder.py` |
-| 1. Harness | `RULE` Rulebook & calendar resolver | 6, 7, 8 | `semantics/rulebook.py`, `semantics/time_engine.py`, `semantics/business_ops.py` |
-| 2. Hiểu câu hỏi | (hạ tầng cho `P4`, `SQL9`, `PY4`) | 9 | `configs/models.yaml`, `llm/client.py` |
-| 2. Hiểu câu hỏi | `P4` Planner 4B, `GUARD` Plan validation | 10 | `llm/agents.py`, `prompts/planner.md` |
+| 1. Harness | `CAT` Schema catalog + join graph + grounding | 5 | `data/column_roles.py`, `data/join_graph.py`, `data/grounder.py` |
+| 1. Harness | `RULE` Rulebook resolver, `TIME` Time and calendar engine | 6 | `semantics/rulebook.py`, `semantics/time_engine.py` |
+| 1. Harness | `RULE` định nghĩa nghiệp vụ có rule id + source span | 7, 8 | `semantics/business_ops.py` |
+| 2. Hiểu câu hỏi | `MODELS` (hạ tầng cho `P4`, `SQL9`, `DSL4`) | 9 | `configs/models.yaml`, `llm/client.py` |
+| 2. Hiểu câu hỏi | `P4` Planner 4B, `GUARD` Plan validator | 10 | `llm/agents.py`, `prompts/planner.md` |
 | 3. Thực thi | `ROUTER`, `FSQL`, `FEXEC` | 11 | `routing/router.py`, `execution/templates.py`, `execution/sql_policy.py` |
-| 3. Thực thi | `SQL9`, `PY4`, `EXEC` | 12 | `pipeline.py`, `execution/dataops_dsl.py`, `execution/worker.py` |
+| 3. Thực thi | `SQL9`, `DSL4` Pandas coder, `EXEC` | 12 | `pipeline.py`, `execution/dataops_dsl.py`, `execution/worker.py` |
 | 4. Kiểm chứng | `CHECK` Evidence-aware verifier | 13 | `verification/invariants.py`, `verification/sql_facts.py` |
 | 4. Kiểm chứng | `DIS`, `DPC` Differential verification | 14 | `verification/differential.py` |
-| 4. Kiểm chứng | `DEC` Calibrated decision | 15 | `decision/answerability.py`, `decision/calibration.py`, `decision/policy.py` |
-| 5. Đầu ra | `OUT` Output formatter | 16 | `adapters/submission_writer.py`, `verification/canonicalize.py` |
+| 4. Kiểm chứng | `DEC` Decision policy, `FAIL` lỗi / timeout / hết ngân sách | 15 | `decision/answerability.py`, `decision/calibration.py`, `decision/policy.py` |
+| 5. Đầu ra | `OUT` Formatter + writer | 16 | `adapters/submission_writer.py`, `verification/canonicalize.py` |
 | 5. Đầu ra | (ngoài sơ đồ: chạy thật, nộp) | 17 | `Dockerfile.gpu`, `docs/OFFICIAL_RULE_AUDIT.md` |
 
 ### Tổng quan
@@ -123,16 +127,16 @@ Chưa có GPU và chưa có bộ kit chính thức (validator, hướng dẫn n�
 | 3 | `IG` | Ingest & normalize: đọc đúng số và ngày | 1 | `make inspect-all`, `make inspect-public` | IN_PROGRESS |
 | 4 | `DB` | Typed views ngữ nghĩa và quy đổi đơn vị | 3 | `make inspect-all` | NOT_STARTED |
 | 5 | `CAT` | Catalog: vai trò cột, join graph, grounding | 4 | `make inspect-all` | IN_PROGRESS |
-| 6 | `RULE` | Rulebook theo bộ và time engine | 1 | `make check` | IN_PROGRESS |
+| 6 | `RULE`, `TIME` | Rulebook theo bộ và time engine | 1 | `make check` | IN_PROGRESS |
 | 7 | `RULE` | Primitive nghiệp vụ lõi: doanh thu, xếp hạng | 5, 6 | `make check` | NOT_STARTED |
 | 8 | `RULE` | Primitive nghiệp vụ mở rộng: nợ, kho, ngành | 7 | `make check` | NOT_STARTED |
-| 9 | (LLM) | Dựng GPU, model và audit tham số | — | `datamate audit-models` | BLOCKED_BY_GPU |
+| 9 | `MODELS` | Dựng GPU, model và audit tham số | — | `datamate audit-models` | BLOCKED_BY_GPU |
 | 10 | `P4`, `GUARD` | Planner 4B và kiểm tra kế hoạch | 5, 6, 9 | `make eval-train` | IN_PROGRESS |
 | 11 | `ROUTER`, `FSQL`, `FEXEC` | Router và đường FAST | **7**, 10 | `make eval-train` | IN_PROGRESS |
-| 12 | `SQL9`, `PY4`, `EXEC` | Đường SLOW: nhiều SQL, DSL độc lập, sửa lỗi | 10, 11 | `make eval-train` | IN_PROGRESS |
+| 12 | `SQL9`, `DSL4`, `EXEC` | Đường SLOW: nhiều SQL, lời giải pandas độc lập, sửa lỗi | 10, 11 | `make eval-train` | IN_PROGRESS |
 | 13 | `CHECK` | Bộ kiểm chứng dựa trên bằng chứng | 11, 12 | `make check` | NOT_STARTED |
 | 14 | `DIS`, `DPC` | Phát hiện bất đồng và kiểm chứng sai khác | 13 | `make eval-train` | NOT_STARTED |
-| 15 | `DEC` | Quyết định: trả lời / unanswerable / abstain | 2, 13, 14 | `make eval-holdout` | NOT_STARTED |
+| 15 | `DEC`, `FAIL` | Quyết định: trả lời / unanswerable / abstain | 2, 13, 14 | `make eval-holdout` | NOT_STARTED |
 | 16 | `OUT` | Formatter đáp án theo §9 | 2 | `make check` | NOT_STARTED |
 | 17 | — | Benchmark, Docker, nộp bài | 15, 16 | `make predict-public`, `make all` | BLOCKED_BY_OFFICIAL_KIT |
 
@@ -249,7 +253,8 @@ rulebook và chốt cách chia doanh nghiệp cho mọi thử nghiệm sau.
 
 Kết quả là 588 cột số và 245 cột ngày bị để dạng chữ. Bộ kiểm tra coi mọi bảng có cột
 mơ hồ là lỗi cứng, nên các bảng bán hàng chính bị loại. Bản gốc (raw) và nguồn gốc từng dòng
-phải được giữ nguyên.
+phải được giữ nguyên. Node `IG` của sơ đồ là "immutable raw ingest": giữ SHA-256 và nguồn gốc,
+mở SQLite với `mode=ro`, kiểm tra đường dẫn không thoát khỏi thư mục cho phép.
 
 **Cần làm**
 1. Giá trị số gốc từ Excel/SQLite (`int`, `float`) chuyển thẳng sang `Decimal`.
@@ -282,7 +287,8 @@ phải được giữ nguyên.
 
 **Lệnh:** `make inspect-all`
 
-**Mục đích.** Node DB là "unified typed views": một lớp bảng sạch, cùng quy ước cho mọi shop.
+**Mục đích.** Node DB là "DuckDB typed views": một lớp bảng sạch, cùng quy ước cho mọi shop.
+Giữ riêng 0 / NULL / thiếu, tiền dùng `Decimal`, cache theo fingerprint của từng doanh nghiệp.
 File xuất từ phần mềm bán hàng không dùng thẳng được. Rulebook §8 quy định:
 - Ô trống ở các dòng sau của cùng một đơn mang giá trị của dòng đầu (khách, trạng thái…).
 - Hai dòng giống hệt nhau trong cùng một đơn là lỗi xuất file, chỉ tính một lần.
@@ -361,12 +367,15 @@ câu hỏi ứng với giá trị nào trong dữ liệu.
 
 ---
 
-### Task 6 — Rulebook theo bộ và time engine · node `RULE` (1/3)
+### Task 6 — Rulebook theo bộ và time engine · node `RULE` (1/3), `TIME`
 
 **Lệnh:** `make check`
 
-**Mục đích.** Node RULE là bộ giải rulebook và lịch, mỗi định nghĩa trích dẫn dòng nguồn. Câu
-hỏi nào cũng gắn với một khoảng thời gian, và hiểu sai kỳ là sai đáp án. Bộ hiểu thời gian hiện
+**Mục đích.** Sơ đồ tách hai node, cả hai lấy thẳng từ INPUT. `RULE` là bộ giải rulebook: mỗi
+định nghĩa trích dẫn rule id và dòng nguồn; không có luật thì gắn cờ rủi ro, không tự nghĩ công
+thức. `TIME` là time engine: khoảng nửa mở, tuần bắt đầu thứ Hai, tính đến `as_of_date`, ngày âm
+chỉ lấy từ `calendar.csv` của bộ đang chạy. Câu hỏi nào cũng gắn với một khoảng thời gian, và
+hiểu sai kỳ là sai đáp án. Bộ hiểu thời gian hiện
 mới xử lý một phần §2 và tìm từ khóa sau khi bỏ dấu:
 - "Khách **Tuấn** mua bao nhiêu đơn tháng này" bị hiểu là "tuần" và bỏ qua "tháng này".
 - "**Tủ** lạnh…", "**Đèn** LED…" bị đánh dấu mơ hồ.
@@ -414,8 +423,8 @@ Rulebook hiện bị tách theo từng dòng văn bản, trong khi public test c
 
 **Lệnh:** `make check`
 
-**Mục đích.** "Definitions with cited source spans" của node RULE nghĩa là mỗi định nghĩa phải
-thành code có nguồn, không để model tự nghĩ. Hơn 80% đáp án là số và phần trăm, phần lớn xoay
+**Mục đích.** Node RULE ghi "each definition cites rule id + source span; no rule: flag risk,
+never invent a formula". Nghĩa là mỗi định nghĩa phải thành code có nguồn, không để model tự nghĩ. Hơn 80% đáp án là số và phần trăm, phần lớn xoay
 quanh doanh thu, số đơn, bán chạy. Các định nghĩa rất dễ sai, ví dụ:
 - đơn có trả hàng **dù chỉ một phần** bị bỏ cả đơn;
 - doanh thu **không** trừ giảm giá trên cả đơn, không cộng VAT, không gồm phí giao;
@@ -504,12 +513,13 @@ quanh doanh thu, số đơn, bán chạy. Các định nghĩa rất dễ sai, v�
 
 ---
 
-### Task 9 — Dựng GPU, model và audit tham số · hạ tầng cho `P4`, `SQL9`, `PY4`
+### Task 9 — Dựng GPU, model và audit tham số · node `MODELS`
 
 **Lệnh:** `datamate audit-models --config configs/models.yaml`
 
-**Mục đích.** Ba node màu xanh của sơ đồ dùng hai model: Qwen3.5-4B (`P4` lập kế hoạch, `PY4`
-lời giải độc lập) và Qwen3.5-9B (`SQL9` sinh SQL, sửa lỗi, critic ở `DPC`). Tổng tham số phải
+**Mục đích.** Node `MODELS` mô tả hai checkpoint cho các vai trò model: Qwen3.5-4B (`P4` lập kế
+hoạch, `DSL4` lời giải pandas độc lập) và Qwen3.5-9B (`SQL9` sinh SQL, sửa lỗi, critic ở `DPC`).
+Phải có cấu hình dự phòng `FALLBACK_SINGLE_9B`. Tổng tham số phải
 ≤ 15B **theo cách đếm của BTC**, và cách đếm đó chưa được xác nhận (có tính vision encoder, tied
 weights không). Task này cần bạn cấp một máy Linux hoặc WSL2 có GPU.
 
@@ -561,8 +571,9 @@ hơn sẽ vượt.
    khoảng thời gian đã giải, danh sách primitive có sẵn (Task 7–8).
 3. Viết lại prompt planner: đọc tiếng Việt không dấu và viết tắt ("sp", "dc", "ko"); coi dữ liệu
    là untrusted; chỉ chọn cột, luật, primitive có trong context.
-4. `GUARD` kiểm tra đủ năm mục của sơ đồ: luật, cột, bộ lọc, khoảng ngày (khớp với time engine),
-   loại đáp án. Sai thì cho planner sửa một lần, vẫn sai thì abstain.
+4. `GUARD` là code, kiểm tra đủ các mục của sơ đồ: schema Pydantic; bảng, cột, luật có thật;
+   bộ lọc đã grounding; khoảng ngày (khớp với `TIME`); loại đáp án. Sai thì cho planner sửa một
+   lần, vẫn sai thì đi nhánh `FAIL` (abstain + `invalid_plan`).
 5. Thay `assert plan is not None` trong pipeline bằng raise lỗi có kiểu.
 6. Few-shot từ train chỉ dùng khi luật chính thức cho phép (Task 17 bước 1).
 
@@ -589,8 +600,10 @@ hơn sẽ vượt.
 
 **Lệnh:** `make eval-train` · **Cần có:** Task 7 xong
 
-**Mục đích.** `ROUTER` hỏi "câu này đơn giản và rõ ràng không?". Có thì đi FAST: một template
-đã kiểm chứng ghép từ primitive (hoặc một SQL), chạy chỉ-đọc, kiểm tra kiểu và bất biến. Đường
+**Mục đích.** `ROUTER` là code, chọn FAST hoặc SLOW kèm mã lý do và ngân sách; hết ngân sách thì
+đi `FAIL`. FAST: một template đã kiểm chứng ghép từ primitive (hoặc một SQL). `FEXEC` qua
+allowlist AST của sqlglot (chỉ `SELECT` / CTE), chạy trong worker riêng có giới hạn thời gian, bộ
+nhớ, số dòng, rồi kiểm tra kiểu và bất biến. Đường
 này nhanh và ít sai nhất, nên càng nhiều câu đi FAST càng tốt. Bộ chạy SQL ở đây dùng chung với
 đường SLOW, và ở commit hiện tại có hai lỗi:
 - Câu SQL thiếu dấu nháy (`SELECT 'abc FROM t`) ném lỗi `TokenError` không ai bắt, nên cả batch
@@ -611,7 +624,8 @@ này nhanh và ít sai nhất, nên càng nhiều câu đi FAST càng tốt. B�
    - thêm hàm thuần vào allowlist: `like`, `ilike`, `lower`, `upper`, `trim`, `length`,
      `substring`, `concat`, `timestamptrunc`, `timetostr`, `hour`, `dayofweek`, `floor`, `ceil`;
    - vẫn chặn mọi I/O, extension, table function.
-5. FAST thất bại (lỗi chạy hoặc lỗi kiểm tra) thì nâng lên SLOW, ghi lý do.
+5. FAST thất bại ở bước kiểm tra thì nâng lên SLOW, ghi lý do. Timeout hoặc lỗi worker mà không
+   còn ngân sách thì đi `FAIL`.
 
 **File cần code**
 
@@ -632,27 +646,30 @@ này nhanh và ít sai nhất, nên càng nhiều câu đi FAST càng tốt. B�
 
 ---
 
-### Task 12 — Đường SLOW: nhiều SQL, DSL độc lập, sửa lỗi · node `SQL9`, `PY4`, `EXEC`
+### Task 12 — Đường SLOW: nhiều SQL, lời giải pandas độc lập, sửa lỗi · node `SQL9`, `DSL4`, `EXEC`
 
 **Lệnh:** `make eval-train`
 
 **Mục đích.** Câu khó đi SLOW. `SQL9` sinh nhiều SQL theo các chiến lược khác nhau (trực tiếp,
-CTE, tổng hợp trước rồi mới join). `PY4` viết một lời giải độc lập bằng DataOps DSL, **chỉ từ câu
-hỏi và bằng chứng, không thấy SQL hay kết quả SQL**. `EXEC` chạy tất cả trong sandbox và cho sửa
-lỗi có giới hạn. Ở commit hiện tại:
+CTE, tổng hợp trước rồi mới join). `DSL4` (Pandas coder 4B) viết một lời giải độc lập dạng danh
+sách thao tác pandas JSON có kiểu (filter / aggregate / group / sort / select), **chỉ từ câu hỏi
+và bằng chứng của `CAT`, không thấy SQL, PlanIR hay kết quả**. `EXEC` chạy trong sandbox: SQL qua
+allowlist AST và worker riêng; thao tác pandas qua interpreter của dự án gọi pandas, **không chạy
+Python do model sinh, không `eval` / `exec`**. Sửa lỗi có giới hạn, giữ nghĩa câu hỏi và không
+nới guardrail. Timeout hoặc lỗi thì đi `FAIL`. Ở commit hiện tại:
 - `Pipeline.solve` dài 160 dòng, lồng 6 cấp, không test riêng được vòng sửa lỗi.
-- Bảng 56.501 dòng của biz_101 vượt giới hạn 10.000 dòng của DSL, nên DSL luôn lỗi. Lỗi đó không
-  có `try` riêng, nên các SQL đã chạy tốt cũng bị bỏ theo.
+- Bảng 56.501 dòng của biz_101 vượt giới hạn 10.000 dòng của nhánh pandas, nên nhánh này luôn lỗi.
+  Lỗi đó không có `try` riêng, nên các SQL đã chạy tốt cũng bị bỏ theo.
 
 **Cần làm**
 1. Tách `Pipeline.solve` thành `_make_plan`, `_run_sql_candidates`, `_cross_check_dsl`,
    `_write_trace`. Hành vi không đổi.
-2. Nhánh DSL có `try` riêng và giới hạn dòng nguồn riêng (`max_dsl_source_rows`); lỗi DSL ghi
+2. Nhánh pandas có `try` riêng và giới hạn dòng nguồn riêng (`max_dsl_source_rows`); lỗi ghi
    `dsl_failed`, không xóa bằng chứng SQL.
 3. Chuyển các con số cứng vào `Limits`/`Models` *(đang dở trong working tree)*: 512000,
    `max_tokens` 4096, 32000, 2000000, số ứng viên SLOW 3.
-4. Viết lại prompt `sql_coder.md`, `dsl_coder.md`: dùng primitive làm khối dựng; DSL không nhận
-   khóa SQL, PlanIR hay kết quả nào.
+4. Viết lại prompt `sql_coder.md`, `dsl_coder.md`: dùng primitive làm khối dựng; Pandas coder chỉ
+   trả JSON đúng schema `DataOpsCandidate`, không nhận khóa SQL, PlanIR hay kết quả nào.
 5. Sửa lỗi theo kết quả chạy: tối đa `max_repairs` lần, chỉ dựa trên loại lỗi, không đổi nghĩa
    câu hỏi; SQL trùng hash thì dừng.
 
@@ -660,14 +677,15 @@ lỗi có giới hạn. Ở commit hiện tại:
 
 | File | Viết gì |
 | --- | --- |
-| `src/datamate/pipeline.py` | tách hàm, `try` riêng cho DSL |
+| `src/datamate/pipeline.py` | tách hàm, `try` riêng cho nhánh pandas |
 | `src/datamate/config.py` | các trường giới hạn mới |
 | `src/datamate/llm/client.py`, `src/datamate/execution/worker.py`, `src/datamate/execution/sql_executor.py` | đọc giới hạn từ config |
 | `src/datamate/prompts/sql_coder.md`, `dsl_coder.md` | prompt mới |
-| `tests/integration/test_pipeline.py` | vòng repair dừng đúng; SQL trùng hash dừng; DSL lỗi vẫn giữ kết quả SQL; payload DSL không có khóa SQL |
+| `tests/integration/test_pipeline.py` | vòng repair dừng đúng; SQL trùng hash dừng; nhánh pandas lỗi vẫn giữ kết quả SQL; payload Pandas coder không có khóa SQL hay PlanIR |
+| `tests/security/test_execution.py` | output Pandas coder không phải JSON đúng schema (ví dụ chuỗi code Python) bị từ chối, không chạy |
 
 **Xong khi**
-- Toàn bộ test cũ vẫn pass, và có test riêng cho vòng repair, nâng FAST→SLOW, DSL lỗi.
+- Toàn bộ test cũ vẫn pass, và có test riêng cho vòng repair, nâng FAST→SLOW, nhánh pandas lỗi.
 - Khi có GPU: trên nhóm phát triển đo được số ứng viên chạy được, số lần repair, độ chính xác SLOW.
 
 ## Phần 4 — Kiểm chứng và quyết định
@@ -678,8 +696,9 @@ lỗi có giới hạn. Ở commit hiện tại:
 
 **Lệnh:** `make check`
 
-**Mục đích.** `CHECK` gom kết quả thành cụm, kiểm tra nguồn gốc, cardinality của JOIN, luật và
-thời gian, và so SQL với DSL. Ở commit hiện tại bộ kiểm tra coi **mọi JOIN là lỗi cứng**, và coi
+**Mục đích.** `CHECK` là code: gom kết quả thành cụm, kiểm tra nguồn gốc đến từng ô, cardinality
+của JOIN (tổng hợp trước phía nhiều, ghi số dòng trước / sau), luật, thời gian, đơn vị, và so SQL
+với pandas. Ở commit hiện tại bộ kiểm tra coi **mọi JOIN là lỗi cứng**, và coi
 mọi bảng có cột cảnh báo là lỗi cứng, nên gần như câu nào cũng bị chặn. Nhiều ứng viên cùng ra một
 số **không chứng minh được** số đó đúng: 5 SQL cùng mắc lỗi fanout vẫn ra cùng một số sai.
 
@@ -690,8 +709,9 @@ số **không chứng minh được** số đó đúng: 5 SQL cùng mắc lỗi 
 3. Đo số dòng trước và sau JOIN, dựa vào join graph (Task 5), để phát hiện fanout, thay cho luật
    "có JOIN là lỗi". Lời giải đi qua primitive đã kiểm chứng thì không bị đánh lỗi JOIN.
 4. Cảnh báo cột nguồn chỉ thành lỗi cứng khi cột đó thật sự được dùng trong lời giải.
-5. Gom kết quả các ứng viên thành cụm theo giá trị đã chuẩn hóa; so cụm SQL với kết quả DSL; ghi
-   nguồn gốc từng cụm.
+5. Gom kết quả các ứng viên thành cụm theo giá trị đã chuẩn hóa; so cụm SQL với kết quả pandas;
+   ghi nguồn gốc từng cụm. Chỉ đặt `provenance_complete=true` khi có lineage đến từng ô.
+6. Kiểm tra đơn vị: số lượng đã quy về đơn vị cơ bản (Task 4), tiền là VND, phần trăm đúng thang.
 
 **File cần code**
 
@@ -717,7 +737,7 @@ nhau, chạy lại để xem lời giải nào đúng định nghĩa. Model 9B c
 này được giới hạn ngân sách thời gian và số lời gọi.
 
 **Cần làm**
-1. Định nghĩa "rủi ro cao": cụm kết quả bất đồng; SQL khác DSL; join chưa chứng minh; thời gian
+1. Định nghĩa "rủi ro cao": cụm kết quả bất đồng; SQL khác pandas; join chưa chứng minh; thời gian
    hoặc thực thể mơ hồ; luật `not_compiled`.
 2. Kiểm chứng sai khác: lấy đúng các dòng nguồn mà hai lời giải xử lý khác nhau (ví dụ đơn có
    trả hàng, đơn nhiều thanh toán), chạy cả hai trên tập nhỏ đó, so với primitive.
@@ -742,12 +762,15 @@ này được giới hạn ngân sách thời gian và số lời gọi.
 
 ---
 
-### Task 15 — Quyết định: trả lời / unanswerable / abstain · node `DEC`
+### Task 15 — Quyết định: trả lời / unanswerable / abstain · node `DEC`, `FAIL`
 
 **Lệnh:** `make eval-holdout`
 
-**Mục đích.** `DEC` chọn một trong ba kết quả theo từng loại đáp án. Sai bị −1, nên chỉ trả lời
-khi xác suất đúng > 0,5. `unanswerable` (70 câu train) là một đáp án riêng: kỳ hỏi nằm hoàn toàn
+**Mục đích.** `DEC` là code, chọn một trong ba kết quả theo từng loại đáp án, dựa trên bằng chứng
+đã hiệu chỉnh, không dùng LLM để cho confidence. Chỉ trả lời khi `p > (A + C) / (R + C)`. R, C, A
+phải lấy từ evaluator chính thức (`BLOCKED_BY_OFFICIAL_KIT`); theo §9 cục bộ (+1 / −1 / 0) thì
+ngưỡng là 0,5. `FAIL` gom mọi lỗi, timeout, hết ngân sách từ `GUARD`, `ROUTER`, `FEXEC`, `EXEC`
+thành abstain kèm mã lý do. `unanswerable` (70 câu train) là một đáp án riêng: kỳ hỏi nằm hoàn toàn
 ngoài khoảng dữ liệu, hoặc shop không ghi loại thông tin đó. Nó **khác** với abstain, và khác với
 "bằng 0".
 
@@ -757,14 +780,16 @@ ngoài khoảng dữ liệu, hoặc shop không ghi loại thông tin đó. Nó 
    - kỳ nằm hoàn toàn ngoài khoảng thì ra `unanswerable`; kỳ chồng một phần thì tính trên phần
      có dữ liệu (§7);
    - shop không có vai trò cột mà câu hỏi cần (Task 5) thì ra `unanswerable`, kèm `reason` là chuỗi;
-   - timeout, lỗi model, lỗi SQL luôn ra abstain, không bao giờ ra `unanswerable`.
+   - timeout, lỗi model, lỗi SQL luôn đi `FAIL` ra abstain, không bao giờ ra `unanswerable`;
+     một câu lỗi không làm dừng batch.
 2. **Đặc trưng cho mỗi câu:**
    - đi FAST hay SLOW; có dùng template không;
-   - số ứng viên đồng ý; SQL và DSL có khớp không;
+   - số ứng viên đồng ý; SQL và pandas có khớp không (đồng ý không phải bằng chứng đúng);
    - số lỗi cứng và mềm, số lần sửa, kết quả `DPC`;
    - độ mơ hồ thời gian và thực thể.
 3. **Hiệu chỉnh:** học logistic hoặc isotonic trên nhóm hiệu chỉnh, theo từng loại đáp án. Ngưỡng
-   trả lời đọc từ config: `p > (A + C) / (R + C)`, theo §9 hiện là 0,5.
+   trả lời đọc từ config: `p > (A + C) / (R + C)`, theo §9 cục bộ hiện là 0,5; thay bằng R, C, A
+   chính thức khi có evaluator.
 4. Đóng băng template, prompt, hàm hiệu chỉnh, ngưỡng. Sau đó **chấm holdout một lần**.
 5. Bật trả lời trong `predict`: dưới ngưỡng thì abstain kèm mã lý do.
 
@@ -777,7 +802,8 @@ ngoài khoảng dữ liệu, hoặc shop không ghi loại thông tin đó. Nó 
 | `src/datamate/decision/policy.py` | quyết định trả lời / abstain theo ngưỡng |
 | `src/datamate/pipeline.py` | gọi `DEC` thay cho abstain cố định |
 | `configs/calibration.json` | tham số hiệu chỉnh, ngưỡng, danh sách doanh nghiệp đã dùng |
-| `tests/unit/test_decision.py` | **tạo mới**: kỳ ngoài dữ liệu; kỳ chồng một phần; timeout ra abstain; ngưỡng đúng chiều |
+| `tests/unit/test_decision.py` | **tạo mới**: kỳ ngoài dữ liệu; kỳ chồng một phần; timeout ra abstain; hết ngân sách ra abstain; ngưỡng đúng chiều |
+| `tests/integration/test_pipeline.py` | một câu lỗi giữa batch ra abstain kèm mã lý do, các câu sau vẫn chạy |
 
 **Xong khi**
 - Điểm holdout dương và cao hơn baseline E0, có khoảng tin cậy theo doanh nghiệp.
@@ -795,8 +821,9 @@ ngoài khoảng dữ liệu, hoặc shop không ghi loại thông tin đó. Nó 
 
 **Lệnh:** `make check` · **Làm sớm được:** ngay sau Task 2
 
-**Mục đích.** `OUT` là bộ định dạng tất định, có schema và unit test, ghi `submission.jsonl`. Không
-dùng model ở bước này. Rulebook §9: **sai format là sai**, bị −1. Ví dụ:
+**Mục đích.** `OUT` là formatter + writer, chỉ là code, không dùng model. Mỗi câu một dòng JSONL
+có kiểu, giữ thứ tự và id đầu vào, ghi nguyên tử, có resume. Nhận đầu vào từ cả `DEC` và `FAIL`.
+Tên file nộp chính thức chưa xác nhận (`PENDING_OFFICIAL_VERIFICATION`). Rulebook §9: **sai format là sai**, bị −1. Ví dụ:
 - tiền phải là số nguyên VND;
 - phần trăm ghi `12.4`, không ghi `0.124`;
 - câu hỏi theo tháng thì đáp án là `"2025-09"`;
