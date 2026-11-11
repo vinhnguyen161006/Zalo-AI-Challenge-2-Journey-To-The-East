@@ -1,0 +1,10 @@
+extends: qwen35.yaml
+adapter: synthetic
+data_root: ../tests/fixtures/synthetic_business/data
+rulebook: ../tests/fixtures/synthetic_business/rulebook.md
+calendar: ../tests/fixtures/synthetic_business/calendar.csv
+questions: ../tests/fixtures/synthetic_business/questions.jsonl
+output_root: ../outputs/qwen35-fixture
+models:
+  context_tokens: 8192
+  max_output_tokens: 2048

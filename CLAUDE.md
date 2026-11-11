@@ -65,9 +65,9 @@ full table is in `CODEX_MASTER_SPEC.md` section 19.1.1. Update all three on any 
 | Schemas and config | `pydantic` 2.14.2, `PyYAML` 6.0.3 | strict typed contracts, YAML config with `extends` |
 | Query engine | `duckdb` 1.5.6 | normalized snapshots, read-only SQL execution, dialect `duckdb` |
 | SQL safety | `sqlglot` 30.29.0 | AST allowlist, table and scope checks |
-| Data reading | `pandas` 2.3.3, `numpy` 2.5.4, `openpyxl` 3.1.5, `charset-normalizer` 3.5.2, stdlib `csv` and `sqlite3` | CSV, XLSX, SQLite (`mode=ro`) ingestion, DataOpsDSL |
+| Data reading | `pandas` 2.3.3, `numpy` 2.5.4, `openpyxl` 3.1.5, `charset-normalizer` 3.5.2, stdlib `csv` and `sqlite3` | CSV, XLSX, SQLite (`mode=ro`) ingestion, PandasCoder operations interpreter |
 | Grounding | `RapidFuzz` 3.14.6 | fuzzy entity shortlist |
-| Isolation | stdlib `subprocess`, `resource` (POSIX only) | SQL/DSL worker process with timeout and limits |
+| Isolation | stdlib `subprocess`, `resource` (POSIX only) | SQL/pandas worker process with timeout and limits |
 | Model client | stdlib `urllib.request` | loopback-only OpenAI-style chat-completions, `json_schema` output |
 | Logging | stdlib `logging` with JSON `EventFormatter` | structured stderr events |
 | Quality | `pytest` 9.2.0, `ruff` 0.17.3, `mypy` 1.20.2, `pandas-stubs`, `types-PyYAML` | tests, lint, format, type check |
@@ -88,8 +88,11 @@ Python.
 2. **Planner (target Qwen3.5-4B):** question to a strict, validated `PlanIR`.
 3. **Plan validator and router (code):** FAST or SLOW with reason codes and budgets.
 4. **FAST path:** verified template or one SQL candidate, read-only execution, invariants.
-5. **SLOW path:** diverse SQL candidates (target Qwen3.5-9B) and an independent DataOps
-   plan (4B) that never sees SQL, PlanIR or results; sandboxed execution; bounded repair.
+5. **SLOW path:** SQLCoder (target Qwen3.5-9B) generates diverse SQL candidates;
+   independent **PandasCoder** (target Qwen3.5-4B) generates typed JSON pandas
+   operations from the question and source evidence. PandasCoder never sees SQL,
+   PlanIR or SQL results. The project interpreter calls pandas in the isolated
+   worker; no generated Python, eval or exec. Repair is bounded and branch-local.
 6. **Verifier:** result clusters, lineage, join cardinality, time, rule and unit checks.
    Agreement between candidates is never proof of correctness.
 7. **Decision:** calibrated `answer` / `unanswerable` / `abstain`. `unanswerable` and
@@ -101,6 +104,12 @@ The 4B and 9B models are logical roles over two checkpoints. Verify the real com
 tensor count before claiming the 15B cap holds. A fallback single-9B configuration must
 exist.
 
+Use **PandasCoder** as the branch name, following the current `architecture.mmd`.
+`DSL4` is its existing Mermaid node ID. `DataOpsCandidate`, `dataops_dsl.py`,
+`dsl_coder.md`, `independent_dsl` and `max_dsl_source_rows` are legacy code/config
+identifiers for this same branch, not an additional DataOps agent. Do not rename
+runtime contracts merely by changing their names in documentation.
+
 ### Repository map
 
 ```text
@@ -111,7 +120,7 @@ src/datamate/
   semantics/         rulebook spans, time engine, calendar
   llm/ + prompts/    model clients (fake, local), role prompts, plan validation
   routing/           FAST/SLOW router, budgets
-  execution/         SQL AST policy, isolated worker, DataOpsDSL
+  execution/         SQL AST policy, isolated worker, PandasCoder ops interpreter
   verification/      canonicalization, invariants
   decision/          abstain policy, utility threshold
   eval/              local diagnostics, business-level split
@@ -124,10 +133,13 @@ docs/                audits, data contracts, runbook, threat model, status
 
 - Overall: `IMPLEMENTED_BUT_NOT_VERIFIED`. The code base is a development foundation.
 - Done and tested on CPU: ingestion of all 30 local businesses, catalog and provenance,
-  rule and time subset, AST-allowlisted SQL, isolated executor, DataOpsDSL subset, budgets,
-  resumable JSONL writer, CLI, 98 passing tests.
-- `predict` abstains on purpose until semantic verification and calibration exist.
-- Not done: real model load and compatibility benchmark, calibration, ablations, official
+  rule and time subset, AST-allowlisted SQL, isolated executor, typed pandas operations,
+  budgets, resumable JSONL writer and CLI. See live status for dated test results.
+- Default configs abstain. The in-progress `execution_baseline` can return executed
+  values but is explicitly uncalibrated and is not the target calibrated policy.
+- An existing quantized 3B Ollama checkpoint was exercised locally; this is not a
+  validation of the target 4B/9B deployment.
+- Not done: target-model compatibility benchmark, calibration, ablations, official
   evaluator and validator integration, Docker image build, GPU benchmark.
 - Official mode fails closed. A YAML flag cannot open that gate.
 
@@ -245,7 +257,8 @@ If the sandbox blocks the temp directory, add `--basetemp outputs/pytest-base`.
 
 - SQL: parse with `sqlglot`, allow only read-only `SELECT` and CTE, run in an isolated
   process with time, memory and row limits. A regex blocklist alone is not acceptable.
-- Never `eval` or `exec` model output. Prefer the typed DataOpsDSL.
+- Never `eval` or `exec` model output. PandasCoder emits typed JSON pandas operations;
+  only the project's allowlisted interpreter calls pandas.
 - Never weaken a guardrail to make a query run. A repair must keep the question's meaning.
 - Block path traversal and write-capable SQLite URIs. Open SQLite with `mode=ro`.
 

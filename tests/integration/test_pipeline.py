@@ -92,11 +92,18 @@ def test_clean_room_branch(config: Config, catalog: Catalog) -> None:
     payload = json.loads(planner.requests[-1][1]["content"])
     assert set(payload) == {
         "question",
+        "question_language",
         "source_schema",
         "source_readme",
         "source_rules",
         "time_evidence",
+        "entity_candidates",
+        "task_to_solve",
     }
+    assert payload["task_to_solve"] == payload["question"]
+    from datamate.semantics.question import language_hints
+
+    assert payload["question_language"] == language_hints(payload["question"]["question"])
     assert "sql_candidate" not in payload and "validated_plan" not in payload
     assert "independent_dsl" in pipeline.last_trace
     assert pipeline.last_trace["cross_paradigm_agreement"] is True
@@ -208,4 +215,21 @@ def test_cloud_endpoint_rejected() -> None:
     from datamate.errors import ModelUnavailable
 
     with pytest.raises(ModelUnavailable):
-        VLLMModelClient("https://api.example.com/v1/chat/completions", "model")
+        VLLMModelClient("https://api.example.com/v1/chat/completions", "model", 128)
+
+
+def test_local_pipeline_wires_token_limit_without_network(config: Config) -> None:
+    config.models.backend = "local"
+    config.models.max_output_tokens = 123
+    pipeline = Pipeline(config)
+    assert isinstance(pipeline.planner, VLLMModelClient)
+    assert isinstance(pipeline.reasoner, VLLMModelClient)
+    assert pipeline.planner.max_output_tokens == 123
+    assert pipeline.reasoner.max_output_tokens == 123
+
+
+def test_trace_contains_final_record_and_elapsed_time(config: Config) -> None:
+    pipeline = Pipeline(config)
+    pipeline.solve(question())
+    assert pipeline.last_trace["final_answer"] == {"id": "q", "type": "abstain"}
+    assert pipeline.last_trace["latency_ms"] >= 0

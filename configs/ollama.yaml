@@ -1,0 +1,20 @@
+extends: dev.yaml
+decision_policy: execution_baseline
+require_independent_agreement: true
+log_programs: true
+output_root: ../outputs/ollama
+models:
+  backend: ollama
+  planner_endpoint: http://127.0.0.1:11434/api/chat
+  reasoner_endpoint: http://127.0.0.1:11434/api/chat
+  planner_model: qwen2.5-coder:3b-instruct
+  reasoner_model: qwen2.5-coder:3b-instruct
+  planner_revision: f72c60cabf6237b07f6e632b2c48d533cef25eda2efbd34bed21c5e9c01e6225
+  reasoner_revision: f72c60cabf6237b07f6e632b2c48d533cef25eda2efbd34bed21c5e9c01e6225
+  max_output_tokens: 2048
+  context_tokens: 16384
+limits:
+  max_wallclock_seconds: 1200
+  max_model_calls: 6
+  slow_candidates: 2
+  max_context_bytes: 100000

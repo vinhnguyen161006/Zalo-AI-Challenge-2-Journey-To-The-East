@@ -35,14 +35,16 @@ class Limits(Schema):
 
 
 class Models(Schema):
-    backend: Literal["disabled", "local"] = "disabled"
+    backend: Literal["disabled", "local", "ollama"] = "disabled"
     planner_endpoint: str = "http://127.0.0.1:8001/v1/chat/completions"
     reasoner_endpoint: str = "http://127.0.0.1:8000/v1/chat/completions"
     planner_model: str = "Qwen/Qwen3.5-4B"
     reasoner_model: str = "Qwen/Qwen3.5-9B"
     max_output_tokens: int = Field(default=4096, ge=1)
+    context_tokens: int = Field(default=16384, ge=1024)
     planner_revision: str | None = None
     reasoner_revision: str | None = None
+    thinking: bool | None = None
 
 
 class Official(Schema):
@@ -62,6 +64,15 @@ class Config(Schema):
     questions: Path
     output_root: Path
     seed: int = 7
+    decision_policy: Literal["abstain", "execution_baseline", "calibrated"] = "abstain"
+    calibration_artifact: Path | None = None
+    require_independent_agreement: bool = True
+    log_programs: bool = False
+    differential_verification: bool = False
+    use_verified_templates: bool = False
+    pandas_first: bool = False
+    adaptive_candidates: bool = False
+    planner_critic: bool = False
     models: Models = Field(default_factory=Models)
     limits: Limits = Field(default_factory=Limits)
     official: Official = Field(default_factory=Official)
@@ -74,6 +85,16 @@ class Config(Schema):
         ]
         if missing:
             raise InvalidInput(f"Missing inputs: {missing}")
+        if self.decision_policy == "execution_baseline" and self.models.backend == "disabled":
+            raise InvalidInput("execution_baseline requires a configured local model backend")
+        if self.decision_policy == "calibrated" and (
+            self.models.backend == "disabled"
+            or not self.calibration_artifact
+            or not self.calibration_artifact.is_file()
+        ):
+            raise InvalidInput(
+                "calibrated policy requires local models and a fitted calibration artifact"
+            )
         if self.mode == "official":
             raise OfficialRulesUnverified(
                 "BLOCKED_BY_OFFICIAL_KIT: official validator, deployment guidance, "
@@ -109,8 +130,15 @@ def _read(path: Path, seen: set[Path]) -> dict[str, Any]:
     parent = data.pop("extends", None)
     if parent:
         data = _merge(_read(path.parent / parent, seen), data)
-    for key in ("data_root", "rulebook", "calendar", "questions", "output_root"):
-        if key in data and not Path(str(data[key])).is_absolute():
+    for key in (
+        "data_root",
+        "rulebook",
+        "calendar",
+        "questions",
+        "output_root",
+        "calibration_artifact",
+    ):
+        if key in data and data[key] is not None and not Path(str(data[key])).is_absolute():
             expanded = os.path.expandvars(str(data[key]))
             if "$" in expanded:
                 raise InvalidInput(f"Unresolved environment variable: {key}")

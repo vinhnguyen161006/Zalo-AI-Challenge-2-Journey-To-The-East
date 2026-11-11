@@ -20,3 +20,13 @@ def canonicalize(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return tuple(canonicalize(item) for item in value)
     raise ValueError("Unsupported canonical value")
+
+
+def answers_agree(left: Any, right: Any, answer_type: str) -> bool:
+    if answer_type in {"string", "percent", "list", "table"}:
+        from datamate.eval.matching import matches
+
+        return matches(
+            {"type": answer_type, "answer": left}, {"type": answer_type, "answer": right}
+        )
+    return canonicalize(left) == canonicalize(right)

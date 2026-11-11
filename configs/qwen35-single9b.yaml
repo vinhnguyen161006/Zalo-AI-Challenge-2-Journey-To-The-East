@@ -1,0 +1,5 @@
+extends: qwen35.yaml
+output_root: ../outputs/qwen35-single9b
+models:
+  planner_model: qwen3.5:9b
+  planner_revision: 56671c2ab9385f9cfcb404638e32cd62d88e3501d44822208363c010179a3c90

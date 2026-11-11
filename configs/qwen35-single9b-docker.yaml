@@ -1,0 +1,4 @@
+extends: qwen35-single9b-evaluation.yaml
+models:
+  planner_revision: 85879493124988ce76ff36a6ac583504cc8d893727db6a0c4f9992a079e6ca49
+  reasoner_revision: 85879493124988ce76ff36a6ac583504cc8d893727db6a0c4f9992a079e6ca49

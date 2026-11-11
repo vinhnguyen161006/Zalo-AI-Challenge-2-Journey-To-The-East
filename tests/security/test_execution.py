@@ -103,6 +103,23 @@ def test_no_truncation(catalog: Catalog) -> None:
         )
 
 
+def test_dsl_source_limit_is_independent_of_result_limit(catalog: Catalog) -> None:
+    from datamate.execution.dataops_dsl import DataOpsCandidate, Operation
+
+    table = next(t.table_id for t in catalog.tables if t.source_file == "orders.csv")
+    candidate = DataOpsCandidate(
+        candidate_id="count",
+        source_table=table,
+        steps=[Operation(op="aggregate", function="count")],
+        answer_type="number",
+    )
+    assert execute(candidate, catalog, Limits(max_result_rows=1, max_dsl_source_rows=4)).rows == [
+        [4]
+    ]
+    with pytest.raises(DatamateError):
+        execute(candidate, catalog, Limits(max_result_rows=10, max_dsl_source_rows=3))
+
+
 def test_timeout_terminates_child(catalog: Catalog, monkeypatch: pytest.MonkeyPatch) -> None:
     def expire(*args: object, **kwargs: object) -> None:
         raise subprocess.TimeoutExpired("worker", 0.01)

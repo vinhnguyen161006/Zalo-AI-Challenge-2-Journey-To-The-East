@@ -1,5 +1,55 @@
 # WORKLOG — DataMate 2026 (AEGDA)
 
+## 2026-11-11: GitHub handoff requested
+
+Rewrote README for a fresh machine: clone/install, private dataset layout, explicit
+4B/9B model preparation, Docker build, calibration/holdout/public, resume, progress
+and final submission. Removed stale README benchmark/setup contradictions; kept
+history and useful referenced fallback configs. Deleted 20 generated cache
+directories after resolving and checking targets inside the workspace. Preserved
+data, weights, outputs, environment and live inference. Extended ignore rules for
+weights/archives/logs/keys. Source candidate scan found no matched credential
+signatures, prohibited source-data directories or files over 5 MB (155 files).
+Windows regression: 202 passed in 70.54s after sandbox Temp permission retry;
+Ruff check/format-check and mypy passed, synthetic CLI smoke passed. User explicitly
+authorized committing/pushing this handoff; no forced update is needed (origin/main
+and local HEAD matched before staging). Calibration remains incomplete.
+Staged-only clean checkout check: 201 tests passed initially, one setup error
+from a missing parent for the custom basetemp. Created that parent and reran the
+single affected test: passed in 0.60s; synthetic CLI smoke then passed from the
+clean checkout. Documented this pytest setup detail. No dependency on local real
+data or model weights was needed for these checks.
+
+## 2026-11-11: Readonly progress viewer
+
+Added `scripts/watch_progress.ps1` with one-shot/watch modes, optional log tail,
+saved-record counts and Docker state/current question. It reads no answer labels
+and changes no inference files. Actual running-container check showed calibration
+2/120, holdout 0/120, public 0/1000 and current Planner question. Documentation
+includes Ctrl+C semantics and stale status caveat. No runtime source modified.
+
+## 2026-11-11: Linux packaging and calibration
+
+Docker migration to E completed. Workflow image `03b7058324df` contains the
+two pinned models; both passed offline CPU structured generation. Linux tests:
+202 passed. New-image synthetic submission: 1 correct, 0 wrong, 2 abstentions,
+local PA 0.3333 and LOCAL_FORMAT_PASS; not an official result.
+
+GPU access and partial CUDA offload succeeded, but actual 4B JSON generation
+timed out at 120 seconds. Added optional persisted `-UseGpu` to the controller;
+PowerShell syntax and GPU prepare-only passed. Actual calibration uses CPU.
+Frozen offline workflow launched in `outputs/docker-finalization-cpu12/`, with
+12 logical CPUs, 12 GB limit, readonly train and network none. It is not complete:
+no calibration artifact, holdout PA or full public submission yet. Existing data
+and unrelated containers preserved. Ruff check/format-check (92 files) and mypy
+(53 runtime files) passed. No inference source changed in this controller update.
+
+Reproduced a Windows PowerShell log-capture failure: redirected Docker stderr
+triggered a terminating NativeCommandError on normal INFO logs. Replaced capture
+with hidden Start-Process redirects; actual completed-container log capture passed.
+Reattached the corrected host controller to the still-running calibration container
+without restarting inference or discarding outputs.
+
 Danh sách các task cần làm để đi từ code base hiện tại tới bài nộp DataMate. Các task được
 xếp theo **đúng luồng dữ liệu của [architecture.mmd](architecture.mmd)**: từ INPUT, qua
 harness tất định, model, hai đường FAST/SLOW, bộ kiểm chứng, quyết định, tới file nộp. Mọi
@@ -10,10 +60,19 @@ Tài liệu liên quan: [CLAUDE.md](CLAUDE.md) (luật viết code, ràng buộc
 [README.md](README.md) · rulebook: [train](data/train/rulebook.md),
 [public test](data/public_test/rulebook.md)
 
-Cập nhật lần cuối: 2026-11-05 (theo sơ đồ mới: nhánh pandas `DSL4`, node `TIME`, `FAIL`,
-`MODELS`).
+Cập nhật thuật ngữ: 2026-11-10, đối chiếu `architecture.mmd` hiện tại.
+Nhánh độc lập là **PandasCoder 4B** (node `DSL4`), bên cạnh **SQLCoder 9B**;
+không có một nhánh DataOps riêng. PandasCoder sinh JSON thao tác pandas có kiểu,
+interpreter gọi pandas; không sinh Python tự do, không `eval`/`exec`, không nhận
+SQL/PlanIR/kết quả của SQLCoder. Các tên `DataOpsCandidate`, `dataops_dsl.py`,
+`dsl_coder.md`, `_cross_check_dsl` và `max_dsl_source_rows` dưới đây là tên code
+cũ hoặc tên dự kiến trong backlog, không phải tên vai trò kiến trúc.
 
-## 0. Hiện trạng
+Phần hiện trạng và các task dưới đây ghi lại audit/backlog ngày 2026-11-05,
+không phải kết quả kiểm thử mới. Trạng thái đang triển khai và thử nghiệm Ollama
+xem [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+
+## 0. Hiện trạng tại audit 2026-11-05
 
 Repo đã có khung chạy được từ đầu đến cuối: nạp CSV/XLSX/SQLite vào DuckDB, catalog có
 nguồn gốc dữ liệu, chặn SQL nguy hiểm bằng AST, chạy SQL trong process riêng, ghi JSONL có
@@ -88,7 +147,7 @@ Chưa có GPU và chưa có bộ kit chính thức (validator, hướng dẫn n�
 | primitive nghiệp vụ | Một hàm code đã kiểm chứng, sinh SQL cho một khái niệm của rulebook, ví dụ "đơn hợp lệ" hoặc "nợ của khách tại ngày X". |
 | PlanIR | Bản kế hoạch dạng JSON mà model 4B viết ra từ câu hỏi: cần bảng nào, cột nào, kỳ nào, loại đáp án gì. |
 | FAST / SLOW | Hai đường xử lý. FAST: câu rõ ràng, dùng template hoặc 1 SQL. SLOW: câu khó, sinh nhiều SQL và một lời giải pandas độc lập để đối chiếu. Router chọn đường, kèm mã lý do và ngân sách. |
-| lời giải pandas (`DSL4`) | Lời giải độc lập: model 4B viết danh sách thao tác pandas dạng JSON có kiểu (filter / aggregate / group / sort / select). Code của dự án (`execution/dataops_dsl.py`) đọc JSON đó và gọi pandas. Không chạy Python do model sinh, không `eval` / `exec`. Nó không được thấy SQL, PlanIR hay kết quả. |
+| PandasCoder (`DSL4`) | Lời giải độc lập: model 4B viết danh sách thao tác pandas dạng JSON có kiểu (filter / aggregate / group / sort / select). Code của dự án (`execution/dataops_dsl.py`, tên file cũ) đọc JSON đó và gọi pandas. Không chạy Python do model sinh, không `eval` / `exec`. Nó không được thấy SQL, PlanIR hay kết quả của SQLCoder. |
 | nhánh `FAIL` | Kế hoạch không hợp lệ, hết ngân sách, timeout hoặc lỗi chạy thì ra abstain kèm mã lý do, không bao giờ ra `unanswerable`. Batch chạy tiếp. |
 | fanout | JOIN làm nhân bản dòng. Ví dụ một đơn có ba lần thanh toán, JOIN thẳng thì doanh thu đơn đó bị cộng ba lần. |
 | split theo doanh nghiệp | Chia 30 doanh nghiệp train thành ba nhóm: phát triển, hiệu chỉnh, holdout. Câu của cùng một doanh nghiệp không bao giờ nằm ở hai nhóm. |
@@ -906,3 +965,87 @@ với các task khác, vì nó quyết định giới hạn thời gian, entrypo
 > 🛑 Hạn nộp 16/11/2026 23:59. Nếu đến 14/11 Task 15 chưa xong, hãy nộp bản đang có. Bản đó
 > chỉ trả lời các câu đi FAST qua primitive đã kiểm chứng, còn lại abstain. Đừng nộp bản trả
 > lời mọi câu khi chưa hiệu chỉnh: sai bị −1 nên có thể ra điểm âm.
+
+# 2026-11-10: Windows execution baseline
+
+Implemented native local Ollama generation, compact PandasCoder operation schemas,
+bounded repairs, model digest checks, per-run traces, local train scoring (including
+observed nested aliases), and resumable submission entrypoints. Latest synthetic
+model fixture: 2 correct / 0 wrong / 1 abstain. A single real train question matched
+its label in 375.641 seconds with 16K context; no held-out accuracy claim.
+153 synthetic tests passed again after the final trace-directory change (87.54s);
+The initial offline Docker attempts failed with a WSL panic and low disk space;
+the user subsequently freed space. No old user images/caches were removed.
+See `docs/SUBMIT_VI.md` for executable commands
+and `docs/IMPLEMENTATION_STATUS.md` for current verification, superseding historical
+plan/checklist statuses above. No commits, test-label training, or source-data edits.
+
+## 2026-11-11: completed local Docker offline smoke
+
+Built `datamate-local:baseline` (image ID `c6e594a0bf45b9c9e6e94c20cf425462abd7e99b933ee7a57b1359234fe4c0e5`).
+Linux Ollama reports the exported manifest digest, so separate Docker configs pin
+that identity while preserving the Windows pin. Model verification stays enabled.
+Actual entrypoint processed three synthetic questions with network mode `none`
+and a read-only `/data` mount: 1 correct, 0 wrong, 2 abstentions, local PA 0.3333;
+LOCAL_FORMAT_PASS, 3 records. Outputs and traces: `outputs/docker-fixture-01/`.
+Question processing took 301.505 seconds in total, excluding startup.
+Windows fixture results differ, so reproducibility remains unresolved.
+Regression: 153 passed in 57.46 seconds; Ruff check/format-check and mypy passed.
+No full public inference, official evaluator, target GPU or six-hour validation.
+
+## 2026-11-11: two-model runtime and calibration workflow
+
+Installed Qwen3.5 4B + 9B Q4_K_M. Both passed real structured generation;
+SHA-256/size checks and GGUF header accounting found 13,949,079,280 stored tensor
+elements including both projectors. This is not official eligibility certification.
+Selected weights exported as verified hardlinks to models/qwen35-export, not Git.
+
+Implemented extended relational/conditional pandas operations with preparation,
+scope-aware pre-aggregate JOIN checks, declared SQL predicate/metric guards,
+monthly partition views with checked dates, source date conventions, typed FAST
+templates, cited status constraints, counterexample snapshots, empirical calibration
+and runtime freezing. Raw Python remains forbidden and SQL stays isolated/read-only.
+
+Real fixture run03: 2 correct, 0 wrong, 1 abstention, local PA 0.6667; format passed.
+185 CPU regression tests passed in 64.87s. Ruff/mypy passed (50 source files).
+Started scripts/finish_model.ps1 for disjoint 60-question calibration followed by
+60-question holdout in outputs/qwen35-finalization-nov11; PID and stdout/stderr
+are recorded there. Calibration/holdout results remain pending, not success claims.
+The job stops if runtime changes or evidence is insufficient to enable final policy.
+No two-model image build: disk after checkpoint preparation was about 6.8 GB free.
+No target GPU, complete public output, official evaluator or final deployment pass.
+
+## 2026-11-11: frozen inference and long calibration restart
+
+Implemented split-specific week/Tet definitions, exact ISO-window binding and
+required SQL rule-reference arrays after actual model failures. Added synthetic
+regressions; 202 tests passed in 115.95s, Ruff check/format-check and mypy passed
+(108 files formatted; 53 runtime sources type checked). A trace-summary utility
+reports completed latency/call/rejection statistics without labels.
+
+Fresh real-model fixture: 2 correct, 0 wrong, 1 abstention, LOCAL_FORMAT_PASS,
+local PA 0.6667, 285.78 question-seconds total and 5 model calls. Initial scoring
+used the wrong fixture label path; the separate score command used labels.jsonl.
+Single-9B development audit abstained after 988.94s/6 calls; it did not establish
+an improvement over the two-model configuration.
+
+Repartitioned with seed 12 so the businesses inspected in debugging are only
+development businesses. Started the 120-question calibration workflow followed
+conditionally by 120 held-out questions in outputs/final-seed12 (PID 12192).
+The script records phase/failure status and refuses incompatible resume plans.
+No final calibrated artifact/holdout result exists at this point.
+
+The attempted 9B offline image exhausted disk and was cancelled at model COPY.
+Replaced only verified duplicate project-owned 3B export copies with hardlinks
+to unchanged installed blobs, recovering 1.8 GiB; about 4 GiB free after build
+cancellation. No source/unrelated cache/images/containers were removed. New
+image build remains blocked on storage, and Docker was unresponsive afterwards.
+
+The first 16K calibration prompt exceeded the output-reserve threshold, so only
+that verified project-owned client was stopped before collecting labels/results.
+Evaluation configs now use 32K. Restarted in outputs/final-seed12-32k, PID 21160;
+status confirms calibration_inference. The pinned 9B backend passed a standalone
+synthetic constant-array schema request in 24.187s (32 output tokens). The first
+compatibility attempt overlapped another inference and timed out; it was not a
+schema incompatibility result. Delayed build cleanup recovered host free space
+to about 11.7 GiB; no further build attempted while the storage question is pending.

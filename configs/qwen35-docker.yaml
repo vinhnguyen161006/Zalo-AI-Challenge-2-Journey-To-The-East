@@ -1,0 +1,4 @@
+extends: qwen35-evaluation.yaml
+models:
+  planner_revision: e0b8c85c75aad2573ff49bec177ebb1013772fba665a53d64c04266439a2222d
+  reasoner_revision: 85879493124988ce76ff36a6ac583504cc8d893727db6a0c4f9992a079e6ca49

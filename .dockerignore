@@ -6,9 +6,17 @@
 .ruff_cache
 /train
 /train.zip
+/data
 /models
 /outputs
 .env
 .env.*
 pytest-cache-files-*
 *.egg-info
+*.gguf
+*.tar
+*.tar.gz
+*.log
+*.pem
+*.key
+/snapshots

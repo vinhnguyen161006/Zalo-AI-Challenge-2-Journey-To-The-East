@@ -62,6 +62,7 @@ class TableCard(Schema):
     rows: int
     candidate_keys: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    derived_from: list[str] = Field(default_factory=list)
 
 
 class JoinCandidate(Schema):
@@ -102,6 +103,8 @@ class TimeResolution(Schema):
     calendar: Literal["solar", "lunar", "mixed"] = "solar"
     evidence: list[str] = Field(default_factory=list)
     ambiguous: bool = False
+    comparison_start_iso: str | None = None
+    comparison_end_exclusive_iso: str | None = None
 
 
 class GroundingCandidate(Schema):
@@ -122,6 +125,8 @@ class FilterIR(Schema):
 class MetricIR(Schema):
     name: str
     rule_ids: list[str] = Field(default_factory=list)
+    function: Literal["sum", "count", "count_distinct", "min", "max", "mean"] | None = None
+    field: str | None = None
 
 
 class SortIR(Schema):
@@ -172,6 +177,7 @@ class VerificationReport(Schema):
     soft_warnings: list[str] = Field(default_factory=list)
     provenance_complete: bool = False
     rule_coverage: float | None = None
+    semantic_checks: dict[str, bool] = Field(default_factory=dict)
 
 
 class InternalDecision(Schema):

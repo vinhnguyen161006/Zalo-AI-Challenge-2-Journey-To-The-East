@@ -12,7 +12,8 @@ from typing import Any
 
 import duckdb
 
-from datamate.execution.dataops_dsl import DataOpsCandidate, interpret
+from datamate.errors import DatamateError
+from datamate.execution.dataops_dsl import DataOpsCandidate, interpret, referenced_tables
 from datamate.execution.sql_policy import validate_sql
 
 
@@ -57,19 +58,33 @@ def main() -> None:
             rows = cursor.fetchmany(limits["max_result_rows"] + 1)
         else:
             candidate = DataOpsCandidate.model_validate(request["candidate"])
-            if candidate.source_table not in request["allowed_tables"]:
+            tables = referenced_tables(candidate)
+            if not set(tables) <= set(request["allowed_tables"]):
                 raise ValueError("DSL source outside allowed catalog")
-            from datamate.data.ingest import quote
-
-            cursor = con.execute(
-                f"SELECT * FROM {quote(candidate.source_table)} LIMIT {limits['max_result_rows'] + 1}"
-            )
             import pandas as pd
 
-            frame = pd.DataFrame(cursor.fetchall(), columns=[c[0] for c in cursor.description])
-            if len(frame) > limits["max_result_rows"]:
-                raise ValueError("DSL source row limit exceeded; no partial execution")
-            frame = interpret(candidate, frame)
+            from datamate.data.ingest import quote
+
+            sources: dict[str, pd.DataFrame] = {}
+            total_rows = 0
+            for table in tables:
+                cursor = con.execute(
+                    f"SELECT * FROM {quote(table)} LIMIT {limits['max_dsl_source_rows'] + 1}"
+                )
+                source = pd.DataFrame(cursor.fetchall(), columns=[c[0] for c in cursor.description])
+                source = source.drop(columns=["_source_row"], errors="ignore")
+                total_rows += len(source)
+                if total_rows > limits["max_dsl_source_rows"]:
+                    raise ValueError("DSL total source row limit exceeded; no partial execution")
+                if (
+                    sum(s.memory_usage(deep=True).sum() for s in [*sources.values(), source])
+                    > limits["memory_mb"] * 1024 * 1024
+                ):
+                    raise ValueError("DSL input memory limit exceeded")
+                sources[table] = source
+            frame = interpret(
+                candidate, sources[candidate.source_table], sources, limits["max_dsl_source_rows"]
+            )
             columns = list(frame.columns)
             rows = list(frame.itertuples(index=False, name=None))
         if len(rows) > limits["max_result_rows"]:
@@ -85,4 +100,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (DatamateError, duckdb.Error, ValueError, TypeError, KeyError, ArithmeticError) as exc:
+        sys.stdout.buffer.write(
+            json.dumps({"error_type": type(exc).__name__, "error": str(exc)[:1000]}).encode()
+        )
+        raise SystemExit(1) from None

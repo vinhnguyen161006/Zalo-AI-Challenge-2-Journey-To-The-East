@@ -1,0 +1,5 @@
+extends: qwen35-single9b.yaml
+seed: 12
+output_root: ../outputs/qwen35-single9b-evaluation
+models:
+  context_tokens: 32768

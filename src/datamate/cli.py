@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from itertools import islice
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -13,14 +14,22 @@ import yaml
 
 from datamate.adapters.official_kit import TrainKitAdapter
 from datamate.adapters.submission_writer import json_line, read_predictions, write_predictions
-from datamate.config import load_config
+from datamate.config import Config, load_config
 from datamate.data.ingest import ingest_business, sha256_file
-from datamate.errors import DatamateError
+from datamate.decision.calibration import (
+    fit_calibration,
+    inference_settings,
+    runtime_signature,
+    save_calibration,
+)
+from datamate.errors import DatamateError, InvalidInput
 from datamate.eval.scorer import diagnostic_score
 from datamate.fixtures import fixture_smoke
+from datamate.llm.client import OllamaModelClient
 from datamate.model_audit import audit_checkpoint
 from datamate.observability import configure_logging
 from datamate.pipeline import Pipeline
+from datamate.types import InternalDecision, QuestionRecord
 
 app = typer.Typer(no_args_is_help=True, help="AEGDA: offline DataMate development harness.")
 ConfigOption = Annotated[Path, typer.Option("--config", "-c")]
@@ -76,7 +85,11 @@ def inspect_business(
         for name in ids:
             try:
                 catalog = ingest_business(
-                    cfg.data_root, name, cfg.output_root / "cache", cfg.limits
+                    cfg.data_root,
+                    name,
+                    cfg.output_root / "cache",
+                    cfg.limits,
+                    rulebook=cfg.rulebook,
                 )
                 reports.append(
                     {
@@ -115,12 +128,19 @@ def test_fixtures(config: ConfigOption = Path("configs/default.yaml")) -> None:
         fail(exc)
 
 
-def _predict(config: Path, questions: Path | None, output: Path, resume: bool) -> dict[str, Any]:
-    cfg = load_config(config)
+def _predict(
+    config: Path | Config,
+    questions: Path | None,
+    output: Path,
+    resume: bool,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    cfg = load_config(config) if isinstance(config, Path) else config
     if questions:
         cfg.questions = questions.resolve()
     cfg.preflight()
-    records = list(TrainKitAdapter(cfg.data_root).iter_questions(cfg.questions))
+    source = TrainKitAdapter(cfg.data_root).iter_questions(cfg.questions)
+    records = list(islice(source, limit)) if limit is not None else list(source)
     fingerprints = {
         p.relative_to(cfg.data_root).as_posix(): sha256_file(p)
         for p in sorted(cfg.data_root.rglob("*"))
@@ -132,11 +152,43 @@ def _predict(config: Path, questions: Path | None, output: Path, resume: bool) -
         sha256_file(cfg.rulebook),
         sha256_file(cfg.calendar),
         fingerprints,
-        "pipeline-0.1.0",
+        {
+            p.relative_to(Path(__file__).parent).as_posix(): sha256_file(p)
+            for p in sorted(Path(__file__).parent.rglob("*"))
+            if p.suffix in {".py", ".md"}
+        },
+        [q.id for q in records],
     ]
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    pipeline = Pipeline(cfg)
-    count = write_predictions(output, records, pipeline.solve, fingerprint, resume=resume)
+    if cfg.calibration_artifact:
+        fingerprint = hashlib.sha256(
+            (fingerprint + sha256_file(cfg.calibration_artifact)).encode()
+        ).hexdigest()
+    trace_directory = output.parent / (
+        "logs" if output.name == "submission.jsonl" else output.stem + ".logs"
+    )
+    pipeline = Pipeline(cfg, trace_directory=trace_directory)
+    if cfg.models.backend == "ollama":
+        for client, revision in (
+            (pipeline.planner, cfg.models.planner_revision),
+            (pipeline.reasoner, cfg.models.reasoner_revision),
+        ):
+            if isinstance(client, OllamaModelClient):
+                client.verify_installed(revision)
+
+    def solve_frozen(question: QuestionRecord) -> InternalDecision:
+        if runtime_signature(inference_settings(cfg)) != pipeline.runtime_signature:
+            raise InvalidInput(
+                "Runtime changed during inference; use a new output after code changes"
+            )
+        result = pipeline.solve(question)
+        if runtime_signature(inference_settings(cfg)) != pipeline.runtime_signature:
+            raise InvalidInput("Runtime changed during this question; its answer was not published")
+        return result
+
+    count = write_predictions(
+        output, records, solve_frozen, fingerprint, resume=resume, publish_progress=True
+    )
     statuses = Counter(r["type"] for r in read_predictions(output))
     return {
         "output": str(output),
@@ -144,6 +196,8 @@ def _predict(config: Path, questions: Path | None, output: Path, resume: bool) -
         "types": dict(statuses),
         "official_ready": False,
         "model_backend": cfg.models.backend,
+        "decision_policy": cfg.decision_policy,
+        "logs": str(pipeline.trace_directory),
     }
 
 
@@ -153,10 +207,96 @@ def predict(
     questions: Path | None = None,
     output: Path = Path("outputs/dev_predictions.jsonl"),
     resume: bool = False,
+    limit: Annotated[int | None, typer.Option(min=1)] = None,
 ) -> None:
     """Write one typed record per question; disabled models yield explicit abstentions."""
     try:
-        emit(_predict(config, questions, output, resume))
+        emit(_predict(config, questions, output, resume, limit))
+    except (DatamateError, ValueError, OSError) as exc:
+        fail(exc)
+
+
+@app.command()
+def submit(
+    split: Annotated[Path, typer.Option()] = Path("/data"),
+    result: Annotated[Path, typer.Option()] = Path("/result"),
+    config: ConfigOption = Path("configs/ollama.yaml"),
+    resume: bool = False,
+    limit: Annotated[int | None, typer.Option(min=1)] = None,
+) -> None:
+    """Run a mounted split with its own rules/calendar and write submission plus logs."""
+    try:
+        cfg = load_config(config)
+        split, result = split.resolve(), result.resolve()
+        if result == split or result.is_relative_to(split):
+            raise ValueError("Result directory must be outside the read-only input split")
+        cfg.data_root = split / "data"
+        cfg.questions = split / "questions.jsonl"
+        cfg.rulebook = split / "rulebook.md"
+        cfg.calendar = split / "calendar.csv"
+        cfg.output_root = result
+        emit(_predict(cfg, None, result / "submission.jsonl", resume, limit))
+    except (DatamateError, ValueError, OSError) as exc:
+        fail(exc)
+
+
+@app.command("check-models")
+def check_models(config: ConfigOption = Path("configs/ollama.yaml")) -> None:
+    """Exercise structured generation against configured local checkpoints."""
+    try:
+        cfg = load_config(config)
+        cfg.preflight()
+        pipeline = Pipeline(cfg)
+        seen: set[tuple[str, str]] = set()
+        reports = []
+        for role, client in (("planner", pipeline.planner), ("reasoner", pipeline.reasoner)):
+            if client is None:
+                raise ValueError("Model backend is disabled")
+            identity = (str(getattr(client, "endpoint", "")), str(getattr(client, "model", "")))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            response = client.generate_structured(
+                [{"role": "user", "content": 'Return exactly {"ready": true}.'}],
+                {
+                    "type": "object",
+                    "properties": {"ready": {"type": "boolean", "const": True}},
+                    "required": ["ready"],
+                    "additionalProperties": False,
+                },
+                timeout=min(120, cfg.limits.max_wallclock_seconds),
+            )
+            if response != {"ready": True}:
+                raise ValueError("Model failed structured generation smoke")
+            reports.append({"role": role, "model": identity[1], "structured_generation": "PASS"})
+        emit({"models": reports, "eligibility_verified": False})
+    except (DatamateError, ValueError, OSError) as exc:
+        fail(exc)
+
+
+@app.command("calibrate")
+def calibrate(
+    labels: Annotated[Path, typer.Option()],
+    traces: Annotated[Path, typer.Option()],
+    output: Annotated[Path, typer.Option()],
+    config: ConfigOption = Path("configs/ollama.yaml"),
+) -> None:
+    """Fit conservative evidence bins using the calibration-business partition only."""
+    try:
+        cfg = load_config(config)
+        cfg.preflight()
+        artifact = fit_calibration(
+            cfg.questions, labels, traces, inference_settings(cfg), seed=cfg.seed
+        )
+        save_calibration(artifact, output)
+        emit(
+            {
+                "output": str(output),
+                "traces_seen": artifact["traces_seen"],
+                "buckets": artifact["buckets"],
+                "official_ready": False,
+            }
+        )
     except (DatamateError, ValueError, OSError) as exc:
         fail(exc)
 
@@ -191,11 +331,42 @@ def evaluate(
     config: ConfigOption = Path("configs/dev.yaml"),
     questions: Path | None = None,
     output: Path = Path("outputs/eval_predictions.jsonl"),
+    limit: Annotated[int | None, typer.Option(min=1)] = None,
+    resume: bool = False,
 ) -> None:
-    """Run dev prediction and an explicitly non-official exact-match diagnostic."""
+    """Run dev prediction and a non-official rule-text scoring diagnostic."""
     try:
-        _predict(config, questions, output, False)
-        emit(diagnostic_score(output, labels))
+        cfg = load_config(config)
+        if cfg.decision_policy == "calibrated" and cfg.calibration_artifact:
+            artifact = json.loads(cfg.calibration_artifact.read_text(encoding="utf-8"))
+            evaluation_questions = TrainKitAdapter(cfg.data_root).iter_questions(
+                questions or cfg.questions
+            )
+            selected_questions = (
+                islice(evaluation_questions, limit) if limit is not None else evaluation_questions
+            )
+            forbidden = set(artifact.get("business_split", {}).get("calibration", []))
+            if any(q.business_id in forbidden for q in selected_questions):
+                raise ValueError("Evaluation leakage: use businesses disjoint from calibration")
+        _predict(config, questions, output, resume, limit)
+        selected = (
+            [r["id"] for r in read_predictions(output)]
+            if limit is not None or questions is not None
+            else None
+        )
+        emit(diagnostic_score(output, labels, selected))
+    except (DatamateError, ValueError, OSError) as exc:
+        fail(exc)
+
+
+@app.command()
+def score(
+    predictions: Annotated[Path, typer.Option()],
+    labels: Annotated[Path, typer.Option()],
+) -> None:
+    """Score existing predictions locally without running inference or reading test packages."""
+    try:
+        emit(diagnostic_score(predictions, labels))
     except (DatamateError, ValueError, OSError) as exc:
         fail(exc)
 

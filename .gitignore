@@ -23,3 +23,12 @@ train.zip
 *.safetensors
 *.pt
 *.bin
+*.gguf
+*.tar
+*.tar.gz
+*.log
+*.pem
+*.key
+/snapshots/
+.DS_Store
+Thumbs.db

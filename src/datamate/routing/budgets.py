@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from datamate.config import Limits
 from datamate.errors import ResourceExceeded
@@ -12,6 +13,7 @@ class BudgetManager:
         self.started = time.monotonic()
         self.model_calls = 0
         self.candidates = 0
+        self.generations: list[dict[str, Any]] = []
 
     def remaining_seconds(self) -> float:
         return max(0, self.limits.max_wallclock_seconds - (time.monotonic() - self.started))

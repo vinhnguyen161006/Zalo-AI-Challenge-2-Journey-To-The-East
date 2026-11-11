@@ -16,6 +16,7 @@ is null boolean in between paren add sub mul div mod neg cast trycast datatype d
 sum count avg min max abs round coalesce nullif case if distinct group having order ordered
 limit offset join with cte subquery union intersect except exists tuple filter window
 partition rownumber rank denserank lag lead date datediff dateadd datesub extract interval
+firstvalue lastvalue ignorenulls respectnulls windowspec
 like ilike escape lower upper trim length substring concat dpipe ceil floor
 year month day hour dayofweek timestamptrunc timetostr
 """.split()

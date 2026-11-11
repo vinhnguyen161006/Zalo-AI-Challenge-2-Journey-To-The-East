@@ -9,7 +9,7 @@ from datamate.eval.scorer import split_businesses
 from datamate.execution.sql_executor import execute
 from datamate.routing.budgets import BudgetManager
 from datamate.types import Catalog, PlanIR, SqlCandidate, TimeResolution
-from datamate.verification.canonicalize import canonicalize
+from datamate.verification.canonicalize import answers_agree, canonicalize
 from datamate.verification.invariants import verify
 
 
@@ -73,3 +73,11 @@ def test_business_splits_are_disjoint() -> None:
 def test_threshold_uses_supplied_rewards() -> None:
     assert utility_threshold(1, 1, 0) == 0.5
     assert utility_threshold(1, 3, 0) == 0.75
+
+
+def test_independent_tables_ignore_row_order_but_lists_keep_order() -> None:
+    left = {"columns": ["customer", "debt"], "rows": [["Lan", 10], ["Tú", 20]]}
+    right = {"columns": ["debt", "customer"], "rows": [[20, "Tú"], [10, "Lan"]]}
+    assert answers_agree(left, right, "table")
+    assert not answers_agree(["Lan", "Tú"], ["Tú", "Lan"], "list")
+    assert not answers_agree(True, 1, "number")

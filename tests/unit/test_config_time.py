@@ -8,10 +8,47 @@ from datamate.config import Config, load_config
 from datamate.errors import InvalidInput, OfficialRulesUnverified
 from datamate.semantics.rulebook import parse_rulebook
 from datamate.semantics.time_engine import resolve_time
+from datamate.types import RuleEvidence
+
+
+def test_split_week_definition_overrides_unrelated_weekday(config: Config) -> None:
+    rule = RuleEvidence(
+        rule_id="week",
+        source_path="synthetic",
+        line_start=1,
+        line_end=1,
+        text="Tuần bắt đầu Chủ nhật. Báo cáo thường gửi thứ Hai.",
+    )
+    result = resolve_time("tuần trc", "2026-03-04", [rule], config.calendar)
+    assert not result.ambiguous
+    assert (result.start_iso, result.end_exclusive_iso) == ("2026-02-22", "2026-03-01")
+    assert "week" in result.evidence
+    conflicting = rule.model_copy(update={"rule_id": "other", "text": "Tuần bắt đầu thứ Hai"})
+    assert resolve_time("tuần này", "2026-03-04", [rule, conflicting], config.calendar).ambiguous
+
+
+def test_tet_dates_are_read_from_split_rule(config: Config, tmp_path: Path) -> None:
+    calendar = tmp_path / "calendar.csv"
+    calendar.write_text(
+        "date,lunar_year,lunar_month,lunar_day\n2026-02-12,2025,12,25\n2026-02-22,2026,1,5\n",
+        encoding="utf-8",
+    )
+    rule = RuleEvidence(
+        rule_id="tet",
+        source_path="synthetic",
+        line_start=1,
+        line_end=1,
+        text="Tết năm Y: từ 25 tháng Chạp đến hết mùng 5 tháng Giêng.",
+    )
+    result = resolve_time("Tết năm 2026", "2026-03-04", [rule], calendar)
+    assert not result.ambiguous
+    assert (result.start_iso, result.end_exclusive_iso) == ("2026-02-12", "2026-02-23")
+    assert "tet" in result.evidence
+    assert resolve_time("Tết năm 2026", "2026-03-04", [], calendar).ambiguous
 
 
 def test_config_paths_independent_of_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = Path(__file__).resolve().parents[2] / "configs/dev.yaml"
+    path = Path(__file__).resolve().parents[2] / "configs/default.yaml"
     monkeypatch.chdir(tmp_path)
     cfg = load_config(path)
     assert cfg.data_root.is_absolute()
@@ -58,7 +95,10 @@ def test_missing_week_rule_and_lunar_year(config: Config) -> None:
 def test_cli_help_and_official_gate() -> None:
     runner = CliRunner()
     assert runner.invoke(app, ["--help"]).exit_code == 0
-    result = runner.invoke(app, ["preflight", "--mode", "official"])
+    fixture_config = Path(__file__).resolve().parents[2] / "configs/default.yaml"
+    result = runner.invoke(
+        app, ["preflight", "--config", str(fixture_config), "--mode", "official"]
+    )
     assert result.exit_code == 1
     assert "BLOCKED_BY_OFFICIAL_KIT" in result.stdout
 
@@ -68,3 +108,63 @@ def test_model_manifest_does_not_claim_a_pass_without_weights() -> None:
     assert result.exit_code == 1
     assert "NOT_AUDITED" in result.stdout
     assert "UNVERIFIED" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("question", "start", "end"),
+    [
+        ("ngày 29/02/2024", "2024-02-29", "2024-03-01"),
+        ("từ 28/02/2024 đến 01/03/2024", "2024-02-28", "2024-03-02"),
+        ("quý 4/2025", "2025-10-01", "2026-01-01"),
+        ("quý trước", "2026-04-01", "2026-07-01"),
+        ("năm 2025", "2025-01-01", "2026-01-01"),
+        ("tháng 12", "2025-12-01", "2026-01-01"),
+    ],
+)
+def test_extended_periods(config: Config, question: str, start: str, end: str) -> None:
+    rule = RuleEvidence(
+        rule_id="year",
+        source_path="synthetic",
+        line_start=1,
+        line_end=1,
+        text="Tháng, quý không ghi năm: kỳ chưa xảy ra lấy năm trước",
+    )
+    resolved = resolve_time(question, "2026-08-10", [rule], config.calendar)
+    assert not resolved.ambiguous
+    assert (resolved.start_iso, resolved.end_exclusive_iso) == (start, end)
+
+
+def test_month_comparison_clips_short_month_only_when_rule_supports_it(config: Config) -> None:
+    question = "tháng này so với tháng trước"
+    rule = RuleEvidence(
+        rule_id="comparison",
+        source_path="synthetic",
+        line_start=1,
+        line_end=1,
+        text="So tháng này với tháng trước lấy cùng số ngày",
+    )
+    resolved = resolve_time(question, "2024-03-31", [rule], config.calendar)
+    assert not resolved.ambiguous
+    assert (resolved.comparison_start_iso, resolved.comparison_end_exclusive_iso) == (
+        "2024-02-01",
+        "2024-03-01",
+    )
+    assert resolve_time(question, "2024-03-31", [], config.calendar).ambiguous
+
+
+@pytest.mark.parametrize(
+    "question", ["Công nợ đến hết ngày 12/10/2025", "Tồn kho tính đến hôm nay"]
+)
+def test_snapshot_uses_full_history_cutoff_when_cited_rule_supports_it(
+    config: Config, question: str
+) -> None:
+    rule = RuleEvidence(
+        rule_id="snapshot",
+        source_path="synthetic",
+        line_start=1,
+        line_end=1,
+        text="Tính từ đầu dữ liệu đến hết ngày đó",
+    )
+    result = resolve_time(question, "2025-10-12", [rule], config.calendar)
+    assert not result.ambiguous
+    assert result.start_iso is None and result.end_exclusive_iso == "2025-10-13"

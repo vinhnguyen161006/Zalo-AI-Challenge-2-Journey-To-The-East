@@ -1,5 +1,32 @@
 # Official rule audit
 
+## Supplied organizer text update, 2026-11-09
+
+The user's competition description and evaluation screenshots supersede older
+assumptions below. Source level: **USER_SUPPLIED_ORGANIZER_TEXT**, not an independently
+downloaded executable kit. No executable evaluator or separate Docker guideline was
+supplied in this turn.
+
+| Item | Supplied requirement |
+|---|---|
+| Score | PA = (correct - wrong) / N; abstain and missing answer score 0 |
+| Models | All models used at inference total at most 15 billion parameters, including all MoE parameters; quantization allowed |
+| Release/license | Weights publicly released before 26 October 2026, with a license permitting use; fine-tuning allowed |
+| Offline | No external services, downloads or network access during inference |
+| Data | Train, synthetic and public datasets permitted; public/private test data cannot be used for training or answer collection |
+| Hardware | 2 RTX 5090, 32 GB each; 512 GB RAM; CUDA >= 12.8 with matching framework |
+| Runtime | Entire private set including model loading within 6 hours |
+| Submission | `predict.sh` reads `/data`, writes `/result/submission.jsonl`; logs under `/result/logs/` include ID, final answer, elapsed time |
+| Reproducibility | Absolute PA difference between uploaded and rerun results <= 0.03 |
+| Ranking | Criterion descending, code ascending for ties; boundary-tie questions excluded; fewer than k returns all candidates |
+
+The local scorer now follows this supplied evaluation text where specified; see
+EVALUATION_CONTRACT.md for unresolved details. It is not the official evaluator.
+Eligibility of actual model checkpoints, Docker base image and target-hardware
+performance remain unverified. `official` mode remains closed.
+
+## Historical audit, 2026-11-04
+
 Date: 2026-11-04, Asia/Bangkok. User supplied `train/`. The portal
 https://challenge.zalo.ai/portal/datamate was opened, but its page extractor had
 no readable text. No organizer evaluator/validator/deployment kit was found.

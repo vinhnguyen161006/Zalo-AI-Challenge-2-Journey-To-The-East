@@ -12,7 +12,7 @@ from typing import Any
 
 from datamate.config import Limits
 from datamate.errors import DatamateError, QueryTimeout, ResourceExceeded
-from datamate.execution.dataops_dsl import DataOpsCandidate
+from datamate.execution.dataops_dsl import DataOpsCandidate, referenced_tables
 from datamate.execution.sql_policy import validate_sql
 from datamate.types import Catalog, ExecutionResult, SqlCandidate
 
@@ -47,7 +47,7 @@ def execute(
     else:
         request.update(kind="dsl", candidate=candidate.model_dump())
         program = candidate.model_dump_json()
-        tables = [candidate.source_table]
+        tables = referenced_tables(candidate)
     env = {
         k: v
         for k, v in os.environ.items()
@@ -69,10 +69,15 @@ def execute(
         )
     except subprocess.TimeoutExpired as exc:
         raise QueryTimeout("Execution child timed out") from exc
-    if completed.returncode:
-        raise DatamateError("EXECUTION_FAILED")
     if len(completed.stdout) > limits.max_result_bytes:
         raise ResourceExceeded("Result byte limit exceeded")
+    if completed.returncode:
+        try:
+            failure = json.loads(completed.stdout)
+            detail = str(failure.get("error", ""))[:1000] if isinstance(failure, dict) else ""
+        except (ValueError, UnicodeDecodeError):
+            detail = ""
+        raise DatamateError("EXECUTION_FAILED: " + detail)
     output = json.loads(completed.stdout, object_hook=_decode)
     return ExecutionResult(
         candidate_id=candidate.candidate_id,

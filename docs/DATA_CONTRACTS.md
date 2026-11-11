@@ -4,6 +4,12 @@ Internal Pydantic schemas have version 1 and forbid unknown fields. Question
 records validate nonblank text, ISO dates, bounded IDs and path-safe business IDs;
 extra question metadata stays in `extra`.
 
+The independent PandasCoder branch emits typed JSON pandas operations, interpreted
+by project code. Its current Python contract remains named `DataOpsCandidate` and
+its interpreter remains `execution/dataops_dsl.py`; these are legacy identifiers,
+not a separate DataOps architecture. Inputs contain original source evidence only,
+never SQLCoder's SQL, PlanIR or execution results. Generated Python is not accepted.
+
 Sources are never written. Package cache keys include business ID, relative
 filenames, SHA-256 and parser version. Prediction resume additionally binds
 config, question, rulebook, calendar, all dataset bytes and pipeline version.
@@ -33,5 +39,6 @@ SQL provenance is table/column-level and is never marked complete row-level.
 
 Local output shape follows the supplied rulebook, including seven types and
 special markers. Exact Decimal JSON avoids float roundtrips. Missing scalars
-are not zero. Official alias/rounding/tolerance semantics are not reimplemented
-as authority; the local scorer is only an exact-match diagnostic.
+are not zero. The local scorer interprets the user-supplied evaluation text and
+supports flat string aliases, normalized names, ordered lists and unordered table
+rows. It is not authoritative; see EVALUATION_CONTRACT.md for parity limitations.

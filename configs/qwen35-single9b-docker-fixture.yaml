@@ -1,0 +1,4 @@
+extends: qwen35-single9b-docker.yaml
+models:
+  context_tokens: 8192
+  max_output_tokens: 2048

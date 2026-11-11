@@ -1,0 +1,6 @@
+ARG RUNTIME_IMAGE=datamate-local:qwen35
+FROM ${RUNTIME_IMAGE}
+COPY --from=calibration_store /calibration-artifact.json /app/calibration/calibration-artifact.json
+COPY --from=calibration_store /deployment-config.yaml /app/calibration/deployment-config.yaml
+ENV DATAMATE_CONFIG=/app/calibration/deployment-config.yaml
+RUN python -c "import json; from pathlib import Path; from datamate.config import load_config; from datamate.decision.calibration import inference_settings, runtime_signature; c=load_config(Path('/app/calibration/deployment-config.yaml')); a=json.loads(c.calibration_artifact.read_text()); assert a.get('runtime_signature') == runtime_signature(inference_settings(c)), 'Calibration/runtime mismatch: fit inside this frozen Linux image'"

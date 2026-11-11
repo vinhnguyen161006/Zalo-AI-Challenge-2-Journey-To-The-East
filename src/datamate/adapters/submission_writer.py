@@ -132,18 +132,23 @@ def write_predictions(
     fingerprint: str,
     *,
     resume: bool = False,
+    publish_progress: bool = False,
 ) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    partial = path.with_suffix(path.suffix + ".partial")
+    partial = path if publish_progress else path.with_suffix(path.suffix + ".partial")
     checkpoint = path.with_suffix(path.suffix + ".checkpoint.json")
     ids = [q.id for q in questions]
     if len(ids) != len(set(ids)):
         raise OutputValidationError("Duplicate input ids")
     completed = 0
     if resume and checkpoint.exists():
-        if json.loads(checkpoint.read_text(encoding="utf-8"))["fingerprint"] != fingerprint:
+        saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        if (
+            saved["fingerprint"] != fingerprint
+            or saved.get("publish_progress", False) != publish_progress
+        ):
             raise OutputValidationError("Resume fingerprint changed; choose a new output")
-        if not partial.exists() and path.exists():
+        if saved.get("complete", False) or (not partial.exists() and path.exists()):
             read_predictions(path, ids)
             return len(ids)
         if partial.exists():
@@ -157,7 +162,15 @@ def write_predictions(
     elif partial.exists() or checkpoint.exists() or path.exists():
         raise OutputValidationError("Output exists; use --resume or choose a new path")
     checkpoint.write_text(
-        json.dumps({"fingerprint": fingerprint, "schema_version": "1"}), encoding="utf-8"
+        json.dumps(
+            {
+                "fingerprint": fingerprint,
+                "schema_version": "1",
+                "publish_progress": publish_progress,
+                "complete": False,
+            }
+        ),
+        encoding="utf-8",
     )
     with partial.open("a" if completed else "w", encoding="utf-8", newline="\n") as stream:
         for question in questions[completed:]:
@@ -168,5 +181,17 @@ def write_predictions(
             stream.flush()
             os.fsync(stream.fileno())
     read_predictions(partial, ids)
-    partial.replace(path)
+    if partial != path:
+        partial.replace(path)
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "fingerprint": fingerprint,
+                "schema_version": "1",
+                "publish_progress": publish_progress,
+                "complete": True,
+            }
+        ),
+        encoding="utf-8",
+    )
     return len(ids)

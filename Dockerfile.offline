@@ -1,0 +1,29 @@
+ARG OLLAMA_IMAGE=ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
+FROM ${OLLAMA_IMAGE}
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    OLLAMA_HOST=127.0.0.1:11434 \
+    OLLAMA_MODELS=/opt/models \
+    OLLAMA_NO_CLOUD=1 \
+    DATAMATE_START_OLLAMA=1
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+WORKDIR /app
+COPY requirements.lock.txt ./
+RUN pip install --no-cache-dir -r requirements.lock.txt
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
+COPY configs ./configs
+COPY scripts ./scripts
+COPY docs ./docs
+COPY architecture.mmd predict.sh train.sh ./
+COPY --link --from=model_store / /opt/models/
+RUN chmod +x /app/predict.sh /app/train.sh
+ARG DATAMATE_CONFIG=configs/ollama-docker.yaml
+ENV DATAMATE_CONFIG=${DATAMATE_CONFIG}
+ENTRYPOINT ["/app/predict.sh"]

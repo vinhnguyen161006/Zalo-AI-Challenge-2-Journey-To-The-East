@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 import sqlite3
 from collections import Counter
 from contextlib import closing
@@ -28,10 +29,11 @@ from datamate.data.normalization import (
     parse_date,
     parse_number,
 )
+from datamate.data.partitions import analysis_tables, monthly_unions
 from datamate.errors import DataQualityError, InvalidInput, ResourceExceeded
 from datamate.types import Catalog, ColumnCard, JoinCandidate, TableCard
 
-PARSER_VERSION = "0.1.2"
+PARSER_VERSION = "0.2.1"
 KEY_NAME_TOKENS = ("id", "ma", "code", "phone", "sdt")
 DECIMAL_SCALE = 10
 DECIMAL_INTEGER_DIGITS = 28
@@ -93,15 +95,32 @@ def _is_identifier_column(name: str, nonempty: list[Any]) -> bool:
     return key_like or leading_zero
 
 
-def _infer(values: list[Any], name: str) -> tuple[str, list[Any], list[str]]:
+def _infer(
+    values: list[Any],
+    name: str,
+    *,
+    day_first_hint: bool | None = None,
+    year_hint: int | None = None,
+) -> tuple[str, list[Any], list[str]]:
     nonempty = [v for v in values if v is not None and str(v).strip()]
     if not nonempty:
         return "VARCHAR", [None] * len(values), []
     if _is_identifier_column(name, nonempty):
         return "VARCHAR", [None if v is None or str(v) == "" else str(v) for v in values], []
     unique = {(type(v).__name__, str(v)): v for v in nonempty}
-    day_first = date_day_first(unique.values())
-    date_cache = {key: parse_date(v, day_first=day_first) for key, v in unique.items()}
+    day_first = day_first_hint if day_first_hint is not None else date_day_first(unique.values())
+
+    def dated(value: Any) -> Any:
+        if (
+            year_hint
+            and any(t in name for t in ("date", "ngay", "thoi_gian"))
+            and isinstance(value, str)
+            and re.fullmatch(r"\d{1,2}/\d{1,2}", value.strip())
+        ):
+            return value.strip() + f"/{year_hint}"
+        return value
+
+    date_cache = {key: parse_date(dated(v), day_first=day_first) for key, v in unique.items()}
     dates = list(date_cache.values())
     if all(p.value is not None for p in dates):
         return (
@@ -161,6 +180,8 @@ def _write_table(
     source_rows: list[int],
     warnings: list[str],
     region: int,
+    day_first_hint: bool | None = None,
+    year_hint: int | None = None,
 ) -> TableCard:
     if not rows or not rows[0]:
         raise DataQualityError(f"Empty table: {relative}")
@@ -180,7 +201,9 @@ def _write_table(
     typed_columns, cards, candidate_keys = [], [], []
     for i, name in enumerate(names):
         values = [r[i] for r in body]
-        dtype, parsed, column_warnings = _infer(values, name)
+        dtype, parsed, column_warnings = _infer(
+            values, name, day_first_hint=day_first_hint, year_hint=year_hint
+        )
         typed_columns.append(parsed)
         nonnull = [v for v in parsed if v is not None]
         distinct = len({str(v) for v in nonnull})
@@ -295,7 +318,12 @@ def propose_joins(con: duckdb.DuckDBPyConnection, tables: list[TableCard]) -> li
 
 
 def ingest_business(
-    root: Path, business_id: str, sink: Path, limits: Limits | None = None
+    root: Path,
+    business_id: str,
+    sink: Path,
+    limits: Limits | None = None,
+    *,
+    rulebook: Path | None = None,
 ) -> Catalog:
     limits = limits or Limits()
     business = safe_child(root, business_id)
@@ -312,7 +340,15 @@ def ingest_business(
             raise InvalidInput("Source symlink escapes business root")
     source_hashes = {p.relative_to(business).as_posix(): sha256_file(p) for p in files}
     fingerprint = hashlib.sha256(
-        json.dumps([business_id, PARSER_VERSION, source_hashes], sort_keys=True).encode()
+        json.dumps(
+            [
+                business_id,
+                PARSER_VERSION,
+                source_hashes,
+                sha256_file(rulebook) if rulebook else None,
+            ],
+            sort_keys=True,
+        ).encode()
     ).hexdigest()
     target = sink / business_id / fingerprint
     target.mkdir(parents=True, exist_ok=True)
@@ -326,6 +362,16 @@ def ingest_business(
         building.unlink()
     con = duckdb.connect(str(building))
     tables, warnings, readme = [], [], []
+    notes = "\n".join(
+        p.read_text(encoding="utf-8-sig") for p in files if p.suffix.casefold() in {".md", ".txt"}
+    )
+    day_first_hint = (
+        True if re.search(r"\bdd\s*/\s*mm\s*/\s*yyyy\b", notes, re.IGNORECASE) else None
+    )
+    rule_text = (
+        normalized_text(rulebook.read_text(encoding="utf-8-sig"), accents=True) if rulebook else ""
+    )
+    sheet_year_rule = "ngay khong ghi nam" in rule_text and "sheet" in rule_text
     try:
         for path in files:
             relative = path.relative_to(business).as_posix()
@@ -347,12 +393,17 @@ def ingest_business(
                         sr[1:],
                         ws,
                         0,
+                        day_first_hint,
                     )
                 )
             elif suffix == ".xlsx":
                 workbook = load_workbook(path, data_only=True, read_only=False)
                 try:
                     for sheet in workbook.worksheets:
+                        years = set(re.findall(r"\b((?:19|20)\d{2})\b", sheet.title))
+                        year_hint = (
+                            int(next(iter(years))) if sheet_year_rule and len(years) == 1 else None
+                        )
                         regions = table_regions(sheet)
                         if not regions:
                             warnings.append(f"no_table_regions:{relative}:{sheet.title}")
@@ -374,6 +425,8 @@ def ingest_business(
                                         "non_table_report_cells_not_loaded",
                                     ],
                                     index,
+                                    day_first_hint,
+                                    year_hint,
                                 )
                             )
                 finally:
@@ -407,6 +460,7 @@ def ingest_business(
                                 sr,
                                 ["sqlite_source_rows_are_scan_ordinals"],
                                 0,
+                                day_first_hint,
                             )
                         )
                     if source.execute(
@@ -417,7 +471,9 @@ def ingest_business(
                 warnings.append(f"unsupported_file:{relative}")
         if not tables:
             raise DataQualityError("No supported tables found")
-        joins = propose_joins(con, tables)
+        unions = monthly_unions(con, tables)
+        tables.extend(unions)
+        joins = propose_joins(con, analysis_tables(tables))
     except duckdb.Error as exc:
         raise DataQualityError(f"DuckDB normalization failed: {type(exc).__name__}") from exc
     finally:

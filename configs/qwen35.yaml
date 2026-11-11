@@ -1,0 +1,20 @@
+extends: ollama.yaml
+output_root: ../outputs/qwen35
+differential_verification: true
+use_verified_templates: true
+pandas_first: true
+adaptive_candidates: true
+planner_critic: true
+models:
+  planner_model: qwen3.5:4b
+  reasoner_model: qwen3.5:9b
+  planner_revision: d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04
+  reasoner_revision: 56671c2ab9385f9cfcb404638e32cd62d88e3501d44822208363c010179a3c90
+  max_output_tokens: 4096
+  context_tokens: 16384
+  thinking: false
+limits:
+  max_wallclock_seconds: 1800
+  max_model_calls: 10
+  memory_mb: 1024
+  max_dsl_source_rows: 750000

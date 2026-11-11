@@ -6,22 +6,25 @@ from rapidfuzz.fuzz import WRatio
 from datamate.config import Limits
 from datamate.data.ingest import quote
 from datamate.data.normalization import normalized_text
+from datamate.data.partitions import analysis_tables
 from datamate.types import Catalog, GroundingCandidate
 
 
-def ground(mention: str, catalog: Catalog, limits: Limits | None = None) -> list[GroundingCandidate]:
+def ground(
+    mention: str, catalog: Catalog, limits: Limits | None = None
+) -> list[GroundingCandidate]:
     """Shortlist source values that resemble the mention; never an answer by itself."""
     limits = limits or Limits()
     candidates = []
     target = normalized_text(mention, accents=True)
     with duckdb.connect(catalog.database_path, read_only=True) as con:
-        for table in catalog.tables:
+        for table in analysis_tables(catalog.tables):
             for column in table.columns:
                 if column.dtype != "VARCHAR":
                     continue
                 values = con.execute(
                     f"SELECT DISTINCT {quote(column.name)} FROM {quote(table.table_id)} "
-                    f"WHERE {quote(column.name)} IS NOT NULL LIMIT {limits.grounding_scan_limit}"
+                    f"WHERE {quote(column.name)} IS NOT NULL ORDER BY {quote(column.name)} LIMIT {limits.grounding_scan_limit}"
                 ).fetchall()
                 for (value,) in values:
                     if len(str(value).strip()) < limits.grounding_min_length:

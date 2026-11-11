@@ -1,0 +1,4 @@
+extends: ollama.yaml
+models:
+  planner_revision: ce40a49b0aa2b3b607d26a603e0f2db06a256cecbc9cca7adf893ae11a80275a
+  reasoner_revision: ce40a49b0aa2b3b607d26a603e0f2db06a256cecbc9cca7adf893ae11a80275a

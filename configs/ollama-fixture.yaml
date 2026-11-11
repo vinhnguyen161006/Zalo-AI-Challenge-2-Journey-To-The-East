@@ -1,0 +1,9 @@
+extends: ollama.yaml
+adapter: synthetic
+data_root: ../tests/fixtures/synthetic_business/data
+rulebook: ../tests/fixtures/synthetic_business/rulebook.md
+calendar: ../tests/fixtures/synthetic_business/calendar.csv
+questions: ../tests/fixtures/synthetic_business/questions.jsonl
+output_root: ../outputs/ollama-fixture
+models:
+  context_tokens: 8192

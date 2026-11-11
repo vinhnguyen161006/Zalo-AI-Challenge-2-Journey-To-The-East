@@ -1,0 +1,5 @@
+extends: qwen35.yaml
+seed: 12
+output_root: ../outputs/qwen35-evaluation
+models:
+  context_tokens: 32768

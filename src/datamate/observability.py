@@ -9,7 +9,15 @@ import logging
 class EventFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         event = {"event": record.getMessage(), "level": record.levelname}
-        for name in ("question_id", "error_type"):
+        for name in (
+            "question_id",
+            "error_type",
+            "status",
+            "elapsed_seconds",
+            "model_calls",
+            "role",
+            "prompt_bytes",
+        ):
             if hasattr(record, name):
                 event[name] = getattr(record, name)
         return json.dumps(event, ensure_ascii=False)
