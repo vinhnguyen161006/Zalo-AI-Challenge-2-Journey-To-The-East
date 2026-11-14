@@ -4,6 +4,7 @@ param(
     [string]$TrainSplit = "data/train",
     [string]$PublicSplit = "data/public_test",
     [string]$FinalImage = "datamate-local:calibrated",
+    [string]$RuntimeConfig = "/app/configs/qwen35-docker.yaml",
     [ValidateRange(1, 1000)][int]$QuestionsPerBusiness = 20,
     [ValidateRange(1, 256)][int]$Cpus = 6,
     [string]$Memory = "12g",
@@ -75,11 +76,12 @@ function Run-Container([string]$Name, [string]$ContainerImage, [string[]]$RunArg
 try {
     Write-Status "running"
     $requestPath = Join-Path $workPath "request.json"
-    $request = @{train = $trainPath; public = $publicPath; per_business = $QuestionsPerBusiness; cpus = $Cpus; memory = $Memory; gpu = [bool]$UseGpu}
+    $request = @{train = $trainPath; public = $publicPath; per_business = $QuestionsPerBusiness; cpus = $Cpus; memory = $Memory; gpu = [bool]$UseGpu; config = $RuntimeConfig}
     if (Test-Path -LiteralPath $requestPath) {
         $previous = Get-Content -LiteralPath $requestPath -Raw | ConvertFrom-Json
         # Older CPU-only work directories predate the GPU switch.
         if (-not ($previous.PSObject.Properties.Name -contains "gpu")) { $previous | Add-Member -NotePropertyName gpu -NotePropertyValue $false }
+        if (-not ($previous.PSObject.Properties.Name -contains "config")) { $previous | Add-Member -NotePropertyName config -NotePropertyValue "/app/configs/qwen35-docker.yaml" }
         foreach ($key in $request.Keys) {
             if ($previous.$key -ne $request[$key]) { throw "Work directory belongs to different inputs/settings; use a new Work directory" }
         }
@@ -107,7 +109,7 @@ try {
     $trainingArguments = @("--per-business", "$QuestionsPerBusiness")
     if ($PrepareOnly) { $trainingArguments += "--prepare-only" }
     Run-Container $trainingName $frozen.tag @("--entrypoint", "/app/train.sh",
-        "--env", "DATAMATE_CONFIG=/app/configs/qwen35-docker.yaml",
+        "--env", "DATAMATE_CONFIG=$RuntimeConfig",
         "--mount", "type=bind,source=$trainPath,target=/train,readonly",
         "--mount", "type=bind,source=$trainResult,target=/result") $trainingArguments
     if ($PrepareOnly) { Write-Status "prepared" "No model inference or label contents read"; exit 0 }

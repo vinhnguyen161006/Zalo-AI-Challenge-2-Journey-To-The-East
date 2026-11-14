@@ -19,7 +19,7 @@ def json_line(value: Any) -> str:
     if isinstance(value, Decimal):
         if not value.is_finite() or len(str(value)) > 500:
             raise OutputValidationError("Nonfinite or oversized decimal")
-        return format(value, "f")
+        return format(value.normalize(), "f")
     if isinstance(value, dict):
         return (
             "{"

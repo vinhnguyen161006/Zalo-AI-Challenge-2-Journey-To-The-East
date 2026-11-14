@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import pandas as pd
 
 from datamate.errors import DatamateError
 from datamate.execution.dataops_dsl import DataOpsCandidate, interpret, referenced_tables
@@ -25,6 +26,12 @@ def encode(value: Any) -> Any:
     if hasattr(value, "item"):
         return value.item()
     raise TypeError(f"Unsupported result type: {type(value).__name__}")
+
+
+def frame_rows(frame: pd.DataFrame) -> list[tuple[Any, ...]]:
+    """Rows with every pandas missing marker (NaN, NaT, NA) returned as None."""
+    clean = frame.astype(object).where(frame.notna(), None)
+    return list(clean.itertuples(index=False, name=None))
 
 
 def main() -> None:
@@ -61,8 +68,6 @@ def main() -> None:
             tables = referenced_tables(candidate)
             if not set(tables) <= set(request["allowed_tables"]):
                 raise ValueError("DSL source outside allowed catalog")
-            import pandas as pd
-
             from datamate.data.ingest import quote
 
             sources: dict[str, pd.DataFrame] = {}
@@ -86,7 +91,7 @@ def main() -> None:
                 candidate, sources[candidate.source_table], sources, limits["max_dsl_source_rows"]
             )
             columns = list(frame.columns)
-            rows = list(frame.itertuples(index=False, name=None))
+            rows = frame_rows(frame)
         if len(rows) > limits["max_result_rows"]:
             raise ValueError("Result row limit exceeded; no truncation")
         output = json.dumps(

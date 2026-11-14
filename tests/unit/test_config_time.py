@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 from datamate.cli import app
 from datamate.config import Config, load_config
 from datamate.errors import InvalidInput, OfficialRulesUnverified
+from datamate.semantics.question import language_hints
 from datamate.semantics.rulebook import parse_rulebook
 from datamate.semantics.time_engine import resolve_time
 from datamate.types import RuleEvidence
@@ -168,3 +169,101 @@ def test_snapshot_uses_full_history_cutoff_when_cited_rule_supports_it(
     result = resolve_time(question, "2025-10-12", [rule], config.calendar)
     assert not result.ambiguous
     assert result.start_iso is None and result.end_exclusive_iso == "2025-10-13"
+
+
+SAME_DAYS = RuleEvidence(
+    rule_id="same_days",
+    source_path="synthetic",
+    line_start=1,
+    line_end=1,
+    text="Tháng này so với tháng trước thì lấy cùng số ngày của tháng trước",
+)
+
+
+@pytest.mark.parametrize(
+    ("question", "primary", "comparison"),
+    [
+        (
+            "dthu tháng 3/2026 hơn hay kém th trước bn %",
+            ("2026-03-01", "2026-04-01"),
+            ("2026-02-01", "2026-03-01"),
+        ),
+        (
+            "So với tháng liền trước, doanh thu tháng 3 năm 2026 thay đổi bao nhiêu %?",
+            ("2026-03-01", "2026-04-01"),
+            ("2026-02-01", "2026-03-01"),
+        ),
+        (
+            "so vs thang truoc do, dthu thang 5/2026 tang hay giam may phan tram",
+            ("2026-05-01", "2026-06-01"),
+            ("2026-04-01", "2026-05-01"),
+        ),
+        (
+            "Doanh thu tháng 4/2026 so với tháng 4/2025 tăng hay giảm bao nhiêu %?",
+            ("2026-04-01", "2026-05-01"),
+            ("2025-04-01", "2025-05-01"),
+        ),
+        (
+            "Th 6/26 dthu so với th 6/25 tăng hay giảm mấy %?",
+            ("2026-06-01", "2026-07-01"),
+            ("2025-06-01", "2025-07-01"),
+        ),
+        (
+            "Dthu T6/2025 so tháng liền trước tăng hay giảm mấy %?",
+            ("2025-06-01", "2025-07-01"),
+            ("2025-05-01", "2025-06-01"),
+        ),
+        (
+            "doanh thu từ đầu tháng này đến hết bữa nay hơn hay kém cùng kỳ tháng rồi bnhiu %",
+            ("2026-03-01", "2026-03-18"),
+            ("2026-02-01", "2026-02-18"),
+        ),
+        (
+            "tuần này so với tuần trước doanh thu hơn kém bao nhiêu",
+            ("2026-03-16", "2026-03-18"),
+            ("2026-03-09", "2026-03-11"),
+        ),
+    ],
+)
+def test_comparison_windows(
+    config: Config, question: str, primary: tuple[str, str], comparison: tuple[str, str]
+) -> None:
+    rules = [*parse_rulebook(config.rulebook), SAME_DAYS]
+    resolved = resolve_time(question, "2026-03-17", rules, config.calendar)
+    assert not resolved.ambiguous
+    assert (resolved.start_iso, resolved.end_exclusive_iso) == primary
+    assert (resolved.comparison_start_iso, resolved.comparison_end_exclusive_iso) == comparison
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("thangs 4/2025 tieenf bans dduowcj bao nhieu", "thang 4/2025 tien ban duoc bao nhieu"),
+        ("check gium dthu nhoms hang", "check gium doanh thu nhom hang"),
+        ("Plusssz Max so vs thang truoc", "Plusssz Max so với thang truoc"),
+        ("revenue 9/2025 la bao nhieu", "doanh thu tháng 9/2025 la bao nhieu"),
+        ("6-2026 bị huỷ mấy đơn", "tháng 6/2026 bị huỷ mấy đơn"),
+        ("tháng 11/25 so với 15/02/2026", "tháng 11/2025 so với 15/02/2026"),
+        ("doanh thu quý 2/2026 là bao nhiêu", "doanh thu quý 2/2026 là bao nhiêu"),
+    ],
+)
+def test_language_hints_repair_typing_and_bare_months(raw: str, expected: str) -> None:
+    assert language_hints(raw)["expanded_question"] == expected
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Thang 2/26 so voi cung thang nam truoc, doanh thu thay doi bao nhieu %?",
+        "2/26 so với cùng kỳ năm trước, doanh thu lên hay xuống bao nhiêu % vậy?",
+        "Doanh thu tháng 2/2026 so với cùng tháng năm ngoái tăng hay giảm mấy %",
+    ],
+)
+def test_same_month_last_year_comparison(config: Config, question: str) -> None:
+    resolved = resolve_time(question, "2026-03-17", parse_rulebook(config.rulebook), config.calendar)
+    assert not resolved.ambiguous
+    assert (resolved.start_iso, resolved.end_exclusive_iso) == ("2026-02-01", "2026-03-01")
+    assert (resolved.comparison_start_iso, resolved.comparison_end_exclusive_iso) == (
+        "2025-02-01",
+        "2025-03-01",
+    )

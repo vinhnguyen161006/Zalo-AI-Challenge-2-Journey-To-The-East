@@ -101,3 +101,72 @@ def test_column_date_order_comes_from_any_proving_cell() -> None:
     assert date_day_first(["03/04/2026", "04/25/2026"]) is False
     assert date_day_first(["25/04/2026", "04/25/2026"]) is None
     assert date_day_first(["03/04/2026"]) is None
+
+
+def test_vietnamese_short_month_date_is_parsed() -> None:
+    assert parse_date("1 thg 7 2025").value == "2025-07-01"
+    assert parse_date("15 thg 12 2025").value == "2025-12-15"
+
+
+def test_iso_datetime_text_keeps_its_time() -> None:
+    assert parse_date("2025-02-01 10:30:00").value == "2025-02-01T10:30:00"
+
+
+def test_excel_serial_is_parsed_only_when_requested() -> None:
+    assert parse_date(45839, excel_serial=True).value == "2025-07-01"
+    assert parse_date("45839", excel_serial=True).value == "2025-07-01"
+    assert parse_date(45839).value is None
+    assert parse_date(3, excel_serial=True).value is None
+
+
+def test_money_markers_select_the_vnd_style() -> None:
+    assert number_style(["1.600đ", "9,200", "69k"]) == "vnd"
+    assert number_style(["560,000", "1,056,000"]) == "en"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("9,200", "9200"),
+        ("1.600đ", "1600"),
+        ("20,1tr", "20100000"),
+        ("19,29tr", "19290000"),
+        ("1,500tr", "1500000"),
+        ("19tr990", "19990000"),
+        ("19tr2", "19200000"),
+        ("2k5", "2500"),
+        ("19300k", "19300000"),
+    ],
+)
+def test_vnd_amounts_parse_to_whole_dong(raw: str, expected: str) -> None:
+    assert parse_number(raw, style="vnd").value == Decimal(expected)
+
+
+def test_compound_scale_amounts_need_no_style() -> None:
+    assert parse_number("19tr990").value == Decimal("19990000")
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("2 cái", "2"), ("5 viên", "5"), ("1,5 kg", "1.5")])
+def test_quantity_with_one_unit_word_is_numeric(raw: str, expected: str) -> None:
+    assert parse_number(raw).value == Decimal(expected)
+
+
+def test_text_with_several_words_is_not_a_quantity() -> None:
+    assert parse_number("1 thg 7 2025").value is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("2 m3", "2"), ("1 xe 5m3", "1"), ("1 cuộn 2x50m", "1"), ("-1 m3", "-1")],
+)
+def test_quantity_with_a_descriptive_unit_is_numeric(raw: str, expected: str) -> None:
+    assert parse_number(raw).value == Decimal(expected)
+
+
+def test_negative_compound_amount() -> None:
+    assert parse_number("-9tr999", style="vnd").value == Decimal("-9999000")
+
+
+def test_space_grouped_amount() -> None:
+    assert parse_number("129 000").value == Decimal("129000")
+    assert parse_number("1 234 567").value == Decimal("1234567")

@@ -1,0 +1,6 @@
+extends: dev.yaml
+seed: 12
+output_root: ../outputs/sales
+decision_policy: execution_baseline
+sales_model: true
+log_programs: true

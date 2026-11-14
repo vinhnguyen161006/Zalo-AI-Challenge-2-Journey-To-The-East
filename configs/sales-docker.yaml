@@ -1,0 +1,2 @@
+extends: sales.yaml
+output_root: /result

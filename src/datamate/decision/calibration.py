@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Any
 from datamate.adapters.submission_writer import json_line
 from datamate.eval.matching import matches
 from datamate.eval.scorer import read_labels, split_businesses
+from datamate.semantics.sales_model import SALES_ROUTE
+
+COMPILED_BUCKET = "sales_model:compiled"
 
 if TYPE_CHECKING:
     from datamate.config import Config
@@ -28,6 +31,7 @@ def inference_settings(config: Config) -> dict[str, Any]:
         "pandas_first": config.pandas_first,
         "adaptive_candidates": config.adaptive_candidates,
         "planner_critic": config.planner_critic,
+        "sales_model": config.sales_model,
     }
 
 
@@ -41,7 +45,14 @@ def runtime_signature(models: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps([files, models], sort_keys=True).encode()).hexdigest()
 
 
+def is_deterministic_route(trace: dict[str, Any]) -> bool:
+    """A compiled rule program has no second paradigm to agree with."""
+    return trace.get("route") == SALES_ROUTE
+
+
 def evidence_bucket(trace: dict[str, Any]) -> str:
+    if is_deterministic_route(trace):
+        return COMPILED_BUCKET
     plan = trace.get("validated_plan", {})
     kind = (
         "scalar"
@@ -110,7 +121,7 @@ def fit_calibration(
             continue
         if answer.get("type") == "unanswerable":
             continue
-        if trace.get("cross_paradigm_agreement") is not True:
+        if not is_deterministic_route(trace) and trace.get("cross_paradigm_agreement") is not True:
             raise ValueError("Calibration requires independently agreed executed candidates")
         if trace.get("business_id") != eligible[key]["business_id"]:
             raise ValueError("Trace business mismatch")
@@ -155,7 +166,7 @@ def calibrated_confidence(artifact: dict[str, Any], trace: dict[str, Any]) -> fl
         raise ValueError("Unsupported calibration artifact")
     if artifact.get("runtime_signature") != trace.get("runtime_signature"):
         raise ValueError("Calibration/runtime fingerprint mismatch")
-    if trace.get("cross_paradigm_agreement") is not True:
+    if not is_deterministic_route(trace) and trace.get("cross_paradigm_agreement") is not True:
         return None
     bucket = artifact.get("buckets", {}).get(evidence_bucket(trace), {})
     if not bucket.get("sufficient"):

@@ -1,0 +1,6 @@
+extends: sales.yaml
+data_root: ../data/public_test/data
+rulebook: ../data/public_test/rulebook.md
+calendar: ../data/public_test/calendar.csv
+questions: ../data/public_test/questions.jsonl
+output_root: ../outputs/sales-public

@@ -73,6 +73,7 @@ class Config(Schema):
     pandas_first: bool = False
     adaptive_candidates: bool = False
     planner_critic: bool = False
+    sales_model: bool = False
     models: Models = Field(default_factory=Models)
     limits: Limits = Field(default_factory=Limits)
     official: Official = Field(default_factory=Official)
@@ -85,10 +86,11 @@ class Config(Schema):
         ]
         if missing:
             raise InvalidInput(f"Missing inputs: {missing}")
-        if self.decision_policy == "execution_baseline" and self.models.backend == "disabled":
-            raise InvalidInput("execution_baseline requires a configured local model backend")
+        has_program_source = self.models.backend != "disabled" or self.sales_model
+        if self.decision_policy == "execution_baseline" and not has_program_source:
+            raise InvalidInput("execution_baseline requires a model backend or the sales model")
         if self.decision_policy == "calibrated" and (
-            self.models.backend == "disabled"
+            not has_program_source
             or not self.calibration_artifact
             or not self.calibration_artifact.is_file()
         ):

@@ -333,7 +333,7 @@ mở SQLite với `mode=ro`, kiểm tra đường dẫn không thoát khỏi th�
 | `src/datamate/data/ingest.py` | `_infer` suy theo cột, năm từ tên sheet/file, `PARSER_VERSION` |
 | `docs/DATA_INGESTION_REPORT.md` | số cột cảnh báo trước và sau, cho cả train và public test |
 | `tests/unit/test_normalization.py` | `0.125`; `"1,200,000"`; cột `"560,000"`; cột mâu thuẫn; cột ngày day-first; ngày không năm |
-
+-
 **Xong khi**
 - Train vẫn nạp 30/30, public test 14/14.
 - Cột `gia_ban`, `thanh_tien` của biz_101 có kiểu `DECIMAL`.

@@ -1,119 +1,42 @@
-"""Expose proven monthly workbook partitions as a UNION ALL view, retaining sources."""
+"""Identify monthly workbook partitions and hide them behind their verified union."""
 
 from __future__ import annotations
 
-import hashlib
 import re
-from collections import defaultdict
-from typing import Any
+from pathlib import PurePosixPath
 
-import duckdb
-
+from datamate.data.normalization import normalized_text
 from datamate.types import TableCard
 
+MONTH_FIRST_TITLE = re.compile(r"(?:T|Thang\s*)?(\d{1,2})[.\-/ _](\d{4})", re.IGNORECASE)
+YEAR_FIRST_TITLE = re.compile(r"(\d{4})[.\-/ _](\d{1,2})")
+SPLIT_FILE_SUFFIX = re.compile(r"[_\- ]?\d+$")
+FILE_MONTH = re.compile(r"[_\- ]?(?:T|Thang)\s*_?(\d{1,2})[_\-. ](\d{4})$", re.IGNORECASE)
+MAX_MONTH = 12
 
-def _quote(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+
+def month_label(title: str | None) -> str | None:
+    """Return YYYY-MM when a sheet title names exactly one month, else None."""
+    text = normalized_text(title or "", accents=True)
+    in_file_name = FILE_MONTH.search(text)
+    if in_file_name:
+        text = f"{in_file_name[1]}-{in_file_name[2]}"
+    month_first = MONTH_FIRST_TITLE.fullmatch(text)
+    year_first = YEAR_FIRST_TITLE.fullmatch(text)
+    if month_first:
+        month, year = int(month_first[1]), int(month_first[2])
+    elif year_first:
+        month, year = int(year_first[2]), int(year_first[1])
+    else:
+        return None
+    return f"{year:04d}-{month:02d}" if 1 <= month <= MAX_MONTH else None
 
 
-def monthly_unions(con: duckdb.DuckDBPyConnection, tables: list[TableCard]) -> list[TableCard]:
-    groups: dict[tuple[Any, ...], list[tuple[TableCard, str]]] = defaultdict(list)
-    for table in tables:
-        title = table.sheet_or_table or ""
-        match = re.fullmatch(r"(?:T|Thang\s*)?(\d{1,2})[.\-/ _](\d{4})", title, flags=re.IGNORECASE)
-        reverse = re.fullmatch(r"(\d{4})[.\-/ _](\d{1,2})", title)
-        if table.source_file.lower().endswith(".xlsx") and (match or reverse):
-            month, year = (
-                (int(match[1]), int(match[2]))
-                if match
-                else (int(reverse[2]), int(reverse[1]))
-                if reverse
-                else (0, 0)
-            )
-            if not 1 <= month <= 12:
-                continue
-            shape = tuple((c.name, c.dtype) for c in table.columns)
-            groups[(table.source_file, shape)].append((table, f"{year:04d}-{month:02d}"))
-    views = []
-    for siblings in groups.values():
-        if len(siblings) < 2 or len({m for _, m in siblings}) != len(siblings):
-            continue
-        first = siblings[0][0]
-        date_columns = []
-        for card in first.columns:
-            if card.dtype != "VARCHAR" or card.warnings:
-                continue
-            valid = True
-            for table, month_label in siblings:
-                bad = con.execute(
-                    f"SELECT COUNT(*) FROM {_quote(table.table_id)} WHERE {_quote(card.name)} IS NULL OR SUBSTR({_quote(card.name)}, 1, 7) <> ?",
-                    [month_label],
-                ).fetchone()
-                if not table.rows or bad is None or bad[0]:
-                    valid = False
-                    break
-            if valid:
-                date_columns.append(card.name)
-        if not date_columns:
-            continue
-        parents = [t.table_id for t, _ in sorted(siblings, key=lambda pair: pair[1])]
-        name = "all_months_" + hashlib.sha256("|".join(parents).encode()).hexdigest()[:12]
-        con.execute(
-            f"CREATE VIEW {_quote(name)} AS "
-            + " UNION ALL ".join(f"SELECT * FROM {_quote(p)}" for p in parents)
-        )
-        count = sum(t.rows for t, _ in siblings)
-        cards, keys = [], []
-        for card in first.columns:
-            nulls, distinct = con.execute(
-                f"SELECT COUNT(*) - COUNT({_quote(card.name)}), COUNT(DISTINCT {_quote(card.name)}) FROM {_quote(name)}"
-            ).fetchone() or (count, 0)
-            samples = list(
-                dict.fromkeys(
-                    v
-                    for t, _ in siblings
-                    for c in t.columns
-                    if c.name == card.name
-                    for v in c.samples
-                )
-            )[:5]
-            warnings = sorted(
-                {
-                    w
-                    for t, _ in siblings
-                    for c in t.columns
-                    if c.name == card.name
-                    for w in c.warnings
-                }
-            )
-            cards.append(
-                card.model_copy(
-                    update={
-                        "null_ratio": nulls / count,
-                        "distinct": distinct,
-                        "samples": samples,
-                        "warnings": warnings,
-                    }
-                )
-            )
-            if not nulls and distinct == count:
-                keys.append(card.name)
-        views.append(
-            TableCard(
-                table_id=name,
-                source_file=first.source_file,
-                source_sha256=first.source_sha256,
-                sheet_or_table="all_months (proven date partitions)",
-                header_row=0,
-                source_rows=[],
-                columns=cards,
-                rows=count,
-                candidate_keys=keys,
-                warnings=sorted({w for t, _ in siblings for w in t.warnings}),
-                derived_from=parents,
-            )
-        )
-    return views
+def file_family(relative: str) -> str:
+    """Group files exported as one list but split by a numeric or year suffix."""
+    path = PurePosixPath(relative)
+    stem = SPLIT_FILE_SUFFIX.sub("", FILE_MONTH.sub("", path.stem)) or path.stem
+    return f"{path.parent.as_posix()}/{normalized_text(stem, accents=True)}{path.suffix.lower()}"
 
 
 def analysis_tables(tables: list[TableCard]) -> list[TableCard]:

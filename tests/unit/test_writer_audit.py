@@ -111,3 +111,9 @@ def test_model_parameter_audit(tmp_path: Path) -> None:
     shard(tmp_path / "c.safetensors", "weight_a", [2, 3])
     with pytest.raises(InvalidInput, match="Duplicate"):
         audit_checkpoint(tmp_path)
+
+
+def test_decimal_answers_drop_storage_scale() -> None:
+    assert json_line({"answer": Decimal("91349100.0000000000")}) == '{"answer":91349100}'
+    assert json_line({"answer": Decimal("18.6000000000")}) == '{"answer":18.6}'
+    assert json_line({"answer": Decimal("0E-10")}) == '{"answer":0}'

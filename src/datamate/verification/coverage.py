@@ -9,6 +9,7 @@ from typing import Any
 from datamate.config import Limits
 from datamate.data.ingest import quote
 from datamate.data.normalization import normalized_text
+from datamate.data.partitions import month_label
 from datamate.execution.sql_executor import execute
 from datamate.types import Catalog, PlanIR, RuleEvidence, SqlCandidate, TimeResolution
 
@@ -43,7 +44,9 @@ def uncovered_period(
         return None
     source, column = next(iter(date_fields)).rsplit(".", 1)
     table = next((t for t in catalog.tables if t.table_id == source), None)
-    card = next((c for c in table.columns if c.name == column), None) if table else None
+    if not table or month_label(table.sheet_or_table):
+        return None
+    card = next((c for c in table.columns if c.name == column), None)
     if not card or card.warnings:
         return None
     result = execute(

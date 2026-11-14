@@ -10,9 +10,48 @@ from datamate.data.normalization import normalized_text
 from datamate.semantics.question import language_hints
 from datamate.types import RuleEvidence, TimeResolution
 
+COMPARISON_TERMS = (
+    "so voi",
+    "cung ky",
+    "tang truong",
+    "hon hay kem",
+    "hon kem",
+    "tang hay giam",
+    "thay doi",
+    "len hay xuong",
+    "len xuong",
+)
+NAMED_MONTH = re.compile(r"\bthang\s+(\d{1,2})(?:\s*/\s*|\s+nam\s+)(\d{4})\b")
+REFERENCE_DISTANCE = 12
 
-def _month_end(start: date) -> date:
+
+def month_end(start: date) -> date:
     return start + timedelta(days=month_calendar.monthrange(start.year, start.month)[1])
+
+
+def _is_whole_month(start: date, end: date) -> bool:
+    return start.day == 1 and end == month_end(start)
+
+
+def _named_months(text: str) -> list[tuple[int, date]]:
+    """Explicit months with their positions, distinct by month."""
+    found: dict[date, int] = {}
+    for match in NAMED_MONTH.finditer(text):
+        month = int(match[1])
+        if 1 <= month <= 12:
+            found.setdefault(date(int(match[2]), month, 1), match.start())
+    return sorted((position, month) for month, position in found.items())
+
+
+def _primary_and_reference(
+    text: str, months: list[tuple[int, date]]
+) -> tuple[date, date, date, date]:
+    """The month right after "so voi" is the reference; the other is the asked period."""
+    anchor = text.find("so voi")
+    first, second = months[0][1], months[1][1]
+    reference_first = anchor >= 0 and 0 <= months[0][0] - anchor <= REFERENCE_DISTANCE
+    primary, reference = (second, first) if reference_first else (first, second)
+    return primary, month_end(primary), reference, month_end(reference)
 
 
 def _explicit_period(text: str, today: date, rule_text: str) -> tuple[date, date] | None:
@@ -38,12 +77,12 @@ def _explicit_period(text: str, today: date, rule_text: str) -> tuple[date, date
                 raise ValueError("Missing year default rule")
             if start > today:
                 start = start.replace(year=year - 1)
-        end = _month_end(_month_end(_month_end(start)))
+        end = month_end(month_end(month_end(start)))
         return start, end
     month = re.search(r"\bthang\s+(\d{1,2})(?:\s*[/\-]\s*|\s+nam\s+|\s+)(\d{4})\b", text)
     if month:
         start = date(int(month[2]), int(month[1]), 1)
-        return start, _month_end(start)
+        return start, month_end(start)
     month_only = re.search(r"\bthang\s+(\d{1,2})\b", text)
     if month_only and not re.search(r"\b(tet|chap|gieng|am lich)\b", text):
         if "khong ghi nam" not in rule_text:
@@ -51,7 +90,7 @@ def _explicit_period(text: str, today: date, rule_text: str) -> tuple[date, date
         start = date(today.year, int(month_only[1]), 1)
         if start > today:
             start = start.replace(year=today.year - 1)
-        return start, _month_end(start)
+        return start, month_end(start)
     year_match = re.search(r"\bnam\s+(\d{4})\b", text)
     if year_match and "tet" not in text:
         return date(int(year_match[1]), 1, 1), date(int(year_match[1]) + 1, 1, 1)
@@ -152,7 +191,7 @@ def resolve_time(
             return result
         week_start = today - timedelta(days=(today.weekday() - week_rules[0][0]) % 7)
         result.evidence = [rule_id for _, rule_id in week_rules]
-        if any(t in text for t in ("tuan truoc", "tuan roi")):
+        if "tuan nay" not in text and any(t in text for t in ("tuan truoc", "tuan roi")):
             start, end = week_start - timedelta(days=7), week_start
         elif "tuan nay" in text:
             start, end = week_start, tomorrow
@@ -209,10 +248,17 @@ def resolve_time(
                 for t in ("thu hai", "hom nay", "as_of_date")
             )
         ][:3]
-        if any(t in text for t in ("so voi", "cung ky", "tang truong")):
+        if any(t in text for t in COMPARISON_TERMS):
             comparison_start: date | None = None
             comparison_end: date | None = None
-            if "cung ky nam" in text:
+            months = _named_months(text)
+            if len(months) == 2 and explicit:
+                start, end, comparison_start, comparison_end = _primary_and_reference(text, months)
+                result.start_iso, result.end_exclusive_iso = start.isoformat(), end.isoformat()
+            elif explicit and _is_whole_month(start, end) and "thang truoc" in text:
+                comparison_end = start
+                comparison_start = (start - timedelta(days=1)).replace(day=1)
+            elif "cung ky nam" in text or re.search(r"cung thang nam", text):
 
                 def previous_year(day: date) -> date:
                     return day.replace(
@@ -235,7 +281,7 @@ def resolve_time(
                 if "cung so ngay" in comparison_text:
                     comparison_start = (start - timedelta(days=1)).replace(day=1)
                     comparison_end = min(
-                        _month_end(comparison_start), comparison_start + timedelta(days=today.day)
+                        month_end(comparison_start), comparison_start + timedelta(days=today.day)
                     )
                     result.evidence += [r.rule_id for r in comparison_rules]
             elif "tuan nay" in text and any(t in text for t in ("tuan truoc", "tuan roi")):

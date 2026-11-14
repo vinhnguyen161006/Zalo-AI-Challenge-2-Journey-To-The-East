@@ -240,3 +240,47 @@ def test_reasoner_recovers_only_after_two_invalid_planner_contracts(
     assert decision.status == "answer" and decision.value == 4
     assert pipeline.last_trace["planner_recovery"] == "reasoner_checkpoint_after_two_invalid_plans"
     assert pipeline.last_trace["model_calls"] == 5
+
+
+def test_failed_pandas_branch_is_recorded_and_sql_still_runs(
+    config: Config, catalog: Catalog
+) -> None:
+    config.decision_policy = "execution_baseline"
+    config.pandas_first = True
+    config.log_programs = True
+    table = next(t.table_id for t in catalog.tables if t.source_file == "orders.csv")
+    question = QuestionRecord(
+        id="count", business_id="biz_demo", question="Đếm bản ghi orders", as_of_date="2026-01-10"
+    )
+    plan = PlanIR(
+        question_id=question.id,
+        intent="count",
+        answer_type="number",
+        required_tables=[table],
+        complexity="low",
+    )
+    broken = {
+        "candidate_id": "dsl",
+        "source_table": table,
+        "steps": [{"op": "aggregate", "function": "sum", "column": "missing_column"}],
+        "answer_type": "number",
+    }
+    planner = FakeModelClient([plan.model_dump(), broken, broken])
+    reasoner = FakeModelClient(
+        [
+            {
+                "candidate_id": "sql",
+                "sql": f"SELECT COUNT(*) FROM {table}",
+                "strategy": "direct",
+                "answer_type": "number",
+            }
+        ]
+    )
+    pipeline = Pipeline(config, planner, reasoner)
+    pipeline.catalogs[question.business_id] = catalog
+    decision = pipeline.solve(question)
+    trace = pipeline.last_trace
+    assert trace["independent_dsl"]["error"] == "EXECUTION_FAILED: Unknown DSL column"
+    assert trace["independent_dsl"]["candidate"]["steps"][0]["column"] == "missing_column"
+    assert [s["status"] for s in trace["candidate_summaries"]] == ["ok"]
+    assert decision.reason_codes != ["DatamateError"]
